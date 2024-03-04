@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "morpheus"
+version = "0.1.0"
+description = ""
+authors = ["neonine2 <jerry.wang95@yahoo.ca>"]
+readme = "README.md"
+packages = [{include = "morpheus", from = "src"}]
+
+[tool.poetry.dependencies]
+python = ">=3.9, <4.0"
+lightning = "^2.2.0.post0"
+pandas = "^2.2.1"
+torchvision = "^0.17.1"
+
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.1.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
