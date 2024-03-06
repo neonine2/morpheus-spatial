@@ -5,14 +5,14 @@ import pytorch_lightning as pl
 import torchmetrics.functional.classification as tfcl
 
 
-class TissueClassifier(pl.LightningModule):
+class PatchClassifier(pl.LightningModule):
     def __init__(
-        self, in_channels, img_size=16, modelArch="unet", num_target_classes=2
+        self, in_channels, img_size=16, model_architecture="unet", num_target_classes=2
     ):
         super().__init__()
         self.classes = num_target_classes
-        modelArch = modelArch.lower()
-        if modelArch == "unet":
+        arch = model_architecture.lower()
+        if arch == "unet":
             backbone = torch.hub.load(
                 "mateuszbuda/brain-segmentation-pytorch",
                 "unet",
@@ -27,7 +27,7 @@ class TissueClassifier(pl.LightningModule):
             )
             classifier.add_module("act", nn.Softmax())
             self.predictor = nn.Sequential(*[backbone, classifier])
-        elif modelArch == "mlp":
+        elif arch == "mlp":
             self.predictor = nn.Sequential(
                 nn.Linear(in_channels, 30),
                 nn.ReLU(),
@@ -36,7 +36,7 @@ class TissueClassifier(pl.LightningModule):
                 nn.Linear(10, num_target_classes),
                 nn.Softmax(),
             )
-        elif modelArch == "lr":
+        elif arch == "lr":
             self.predictor = nn.Sequential(nn.Linear(in_channels, 1), nn.Sigmoid())
 
     def forward(self, x):

@@ -1,0 +1,2 @@
+Starting sshd on port 49075
+slurmstepd: error: *** JOB 40115505 ON hpc-92-08 CANCELLED AT 2024-03-05T12:51:13 ***

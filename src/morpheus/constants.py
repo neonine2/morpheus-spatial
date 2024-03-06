@@ -1,8 +1,9 @@
 from enum import Enum
 
 class colname(Enum):
-    IMAGEID = 'ImageNumber'
-    PATIENTID = 'PatientID'
+    image_id = 'ImageNumber'
+    patient_id = 'PatientID'
+    patch_id = 'patch_index'
 
 class celltype(Enum):
     cd8 = 'Tcytotoxic'

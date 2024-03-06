@@ -11,10 +11,15 @@ python = ">=3.9, <4.0"
 lightning = "^2.2.0.post0"
 pandas = "^2.2.1"
 torchvision = "^0.17.1"
+h5py = "^3.10.0"
 
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.1.0"
+
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.29.3"
 
 [build-system]
 requires = ["poetry-core"]

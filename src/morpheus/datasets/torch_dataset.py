@@ -6,20 +6,14 @@ import torch
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
 
-
-def set_seed(seed):
-    np.random.seed(seed)
-
-
-def set_pytorch_seed(seed):
+def set_all_seed(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():  # GPU operation have separate seed
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
 
-
-class SpatialDataset(Dataset):
+class TorchDataset(Dataset):
     "Characterizes a dataset for PyTorch"
 
     def __init__(self, img_dir, transform=None, target_transform=None):
@@ -58,7 +52,7 @@ def make_torch_dataloader(
     # Define the image transformations
     transformation = [
         transforms.ToTensor(),
-        transforms.Normalize(info_dict["train_set_mean"], info_dict["train_set_stdev"]),
+        transforms.Normalize(info_dict["train_mean"], info_dict["train_stdev"]),
         transforms.ConvertImageDtype(torch.float),
     ]
     if model == "mlp" or model == "lr":
@@ -78,13 +72,13 @@ def make_torch_dataloader(
         test_transform = transforms.Compose(transformation)
 
     # Define the datasets
-    training_data = SpatialDataset(
+    training_data = TorchDataset(
         os.path.join(data_path, "train"), transform=train_transform
     )
-    validation_data = SpatialDataset(
+    validation_data = TorchDataset(
         os.path.join(data_path, "validate"), transform=test_transform
     )
-    testing_data = SpatialDataset(
+    testing_data = TorchDataset(
         os.path.join(data_path, "test"), transform=test_transform
     )
 
