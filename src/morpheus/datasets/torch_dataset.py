@@ -1,17 +1,11 @@
 import os
-import pickle
+import json
 import pandas as pd
 import numpy as np
 import torch
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
-
-def set_all_seed(seed):
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():  # GPU operation have separate seed
-        torch.cuda.manual_seed(seed)
-        torch.cuda.manual_seed_all(seed)
+from ..constants import splits
 
 class TorchDataset(Dataset):
     "Characterizes a dataset for PyTorch"
@@ -40,19 +34,26 @@ class TorchDataset(Dataset):
 
 
 def make_torch_dataloader(
-    data_path,
+    data_path: str,
+    normalization_params_path=None,
     model="unet",
     params={"batch_size": 64, "num_workers": 4, "pin_memory": True},
 ):
 
     # Load the data info which should contain the channel-wise mean and stdev of the training data
-    with open(os.path.join(data_path, "split_info.pkl"), "rb") as f:
-        info_dict = pickle.load(f)
+    if normalization_params_path is None:
+        normalization_params_path = os.path.join(data_path, "normalization_params.json")
+
+    # load the normalization parameters from the json file
+    with open(normalization_params_path, "r") as f:
+        normalization_params = json.load(f)
 
     # Define the image transformations
     transformation = [
         transforms.ToTensor(),
-        transforms.Normalize(info_dict["train_mean"], info_dict["train_stdev"]),
+        transforms.Normalize(
+            normalization_params["mean"], normalization_params["stdev"]
+        ),
         transforms.ConvertImageDtype(torch.float),
     ]
     if model == "mlp" or model == "lr":
@@ -73,13 +74,13 @@ def make_torch_dataloader(
 
     # Define the datasets
     training_data = TorchDataset(
-        os.path.join(data_path, "train"), transform=train_transform
+        os.path.join(data_path, splits.train.value), transform=train_transform
     )
     validation_data = TorchDataset(
-        os.path.join(data_path, "validate"), transform=test_transform
+        os.path.join(data_path, splits.validate.value), transform=test_transform
     )
     testing_data = TorchDataset(
-        os.path.join(data_path, "test"), transform=test_transform
+        os.path.join(data_path, splits.test.value), transform=test_transform
     )
 
     # Define the dataloaders

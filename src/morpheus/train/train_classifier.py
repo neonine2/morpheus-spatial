@@ -15,14 +15,15 @@ def train_classifier(dataset: SpatialDataset,
     if save_model_dir is None:
         save_model_dir = os.path.join(os.path.dirname(dataset.data_path), 'models')
 
+    # initialize dataloaders
+    train_loader, val_loader, test_loader = make_torch_dataloader(dataset.save_dir, 
+                                                                  model=model_arch, 
+                                                                  params=dataloader_params)
+    
     # initialize model
     nchannels = len(dataset.channel_names)
     img_size = dataset.img_size
     model = PatchClassifier(nchannels, img_size, model_architecture=model_arch)
-
-    train_loader, val_loader, test_loader = make_torch_dataloader(dataset.save_dir, 
-                                                                  model=model_arch, 
-                                                                  params=dataloader_params)
 
     trainer = Trainer(devices=1,
                       callbacks=[

@@ -11,7 +11,6 @@ if __name__ == "__main__":
     livertumor = mp.SpatialDataset(data_path)
     livertumor.generate_data_splits(stratify_by='Tcytotoxic', train_size=0.7, test_size=0.15, val_size=0.15)
 
-    print(livertumor.data_dim)
     # train classifier
     # train_classifier(livertumor, model_arch='unet')
 
