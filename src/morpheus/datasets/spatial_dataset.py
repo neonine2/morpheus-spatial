@@ -5,25 +5,26 @@ import pandas as pd
 import h5py
 from ..constants import celltype, splits, colname
 
+
 class SpatialDataset:
-    def __init__(self, data_path:str):
-        self.data_path = data_path 
+    def __init__(self, data_path: str):
+        self.data_path = data_path
         self.load_data()
         self.check_data()
 
     def check_data(self):
         # check that the data is loaded
-        if not hasattr(self, 'metadata'):
+        if not hasattr(self, "metadata"):
             raise ValueError("Metadata not loaded")
-        if not hasattr(self, 'channel_names'):
+        if not hasattr(self, "channel_names"):
             raise ValueError("Channel names not loaded")
-        
+
         # check that the data is consistent
         if len(self.metadata) != self.metadata[colname.patch_id.value].nunique():
             raise ValueError("Metadata contains duplicate patch IDs")
         if len(self.channel_names) != self.data_dim[-1]:
             raise ValueError("Number of channel names do not match data dimensions")
-        
+
         # check key metadata columns are present
         for col in [colname.patient_id.value, colname.patch_id.value]:
             if col not in self.metadata.columns:
@@ -31,24 +32,28 @@ class SpatialDataset:
 
     def load_data(self):
         try:
-            with h5py.File(self.data_path, 'r') as f:
-                self.metadata = pd.DataFrame(f['metadata'][:])
-                self.channel_names = [name.decode('utf-8') for name in f['channel_names'][:]]
-                self.data_dim = f['images'].shape
+            with h5py.File(self.data_path, "r") as f:
+                self.metadata = pd.DataFrame(f["metadata"][:])
+                self.channel_names = [
+                    name.decode("utf-8") for name in f["channel_names"][:]
+                ]
+                self.data_dim = f["images"].shape
         except Exception as e:
             print(f"Error loading data: {e}")
 
-    def generate_data_splits(self, 
-                             stratify_by:str, 
-                             train_size:float, 
-                             val_size:float, 
-                             test_size:float, 
-                             save_dir=None,
-                             random_state=None, 
-                             shuffle=True, 
-                             tolerance={'eps': 0.01, 'train_lb': 0.5, 'ntol': 100},
-                             save=True):
-        '''
+    def generate_data_splits(
+        self,
+        stratify_by: str,
+        train_size: float,
+        val_size: float,
+        test_size: float,
+        save_dir=None,
+        random_state=None,
+        shuffle=True,
+        tolerance={"eps": 0.01, "train_lb": 0.5, "ntol": 100},
+        save=True,
+    ):
+        """
         Generate train, validation, and test data splits, and save the data splits to the given directory
 
         Args:
@@ -76,9 +81,11 @@ class SpatialDataset:
                 The number of attempts to generate a valid data split
         save: bool
             Whether to save the data splits to the save directory
-        '''
+        """
         if save_dir is None:
-            self.save_dir = os.path.join(os.path.dirname(self.data_path), 'data') # default save directory
+            self.save_dir = os.path.join(
+                os.path.dirname(self.data_path), "data"
+            )  # default save directory
         else:
             self.save_dir = save_dir
 
@@ -87,12 +94,22 @@ class SpatialDataset:
             return
 
         print("Generating data splits...")
-        patient_split = self.get_patient_splits(stratify_by, train_size, val_size, test_size, random_state, shuffle, **tolerance)
-        
+        patient_split = self.get_patient_splits(
+            stratify_by,
+            train_size,
+            val_size,
+            test_size,
+            random_state,
+            shuffle,
+            **tolerance,
+        )
+
         if patient_split is None:
-            print("Could not satisfy data split constraints, try again or adjust constraints")
+            print(
+                "Could not satisfy data split constraints, try again or adjust constraints"
+            )
             return
-        
+
         if save:
             print("Saving splits...")
             self.save_splits(patient_split, labelname=stratify_by)
@@ -102,21 +119,29 @@ class SpatialDataset:
     @staticmethod
     def is_valid_split(split_info, eps=0.01, train_lb=0.65):
         tr_prop = split_info[splits.train.value][0]
-        tr_te_diff = abs(split_info[splits.train.value][1] - split_info[splits.test.value][1])
-        tr_va_diff = abs(split_info[splits.train.value][1] - split_info[splits.validate.value][1])
+        tr_te_diff = abs(
+            split_info[splits.train.value][1] - split_info[splits.test.value][1]
+        )
+        tr_va_diff = abs(
+            split_info[splits.train.value][1] - split_info[splits.validate.value][1]
+        )
         return (tr_te_diff < eps) and (tr_va_diff < eps) and (tr_prop > train_lb)
 
-    def get_patient_splits(self, 
-                           stratify_by, 
-                           train_size=0.6, 
-                           val_size=0.2, 
-                           test_size=0.2, 
-                           random_state=42, 
-                           shuffle=True, 
-                           ntol=100, 
-                           eps=0.01, 
-                           train_lb=0.65): 
-        assert train_size + val_size + test_size == 1, "train_size, val_size, and test_size should sum to 1"
+    def get_patient_splits(
+        self,
+        stratify_by,
+        train_size=0.6,
+        val_size=0.2,
+        test_size=0.2,
+        random_state=42,
+        shuffle=True,
+        ntol=100,
+        eps=0.01,
+        train_lb=0.65,
+    ):
+        assert (
+            train_size + val_size + test_size == 1
+        ), "train_size, val_size, and test_size should sum to 1"
 
         patient_id = np.unique(self.metadata[colname.patient_id.value])
         npatches = len(self.metadata)
@@ -136,11 +161,18 @@ class SpatialDataset:
             # compute the proportion of each split based on specified stratification
             split_info = {}
             for split, pat in patient_split.items():
-                data_sub = self.metadata[self.metadata[colname.patient_id.value].isin(pat)]
-                split_info[split] = [len(data_sub)/npatches, data_sub[stratify_by].mean()]
-            
+                data_sub = self.metadata[
+                    self.metadata[colname.patient_id.value].isin(pat)
+                ]
+                split_info[split] = [
+                    len(data_sub) / npatches,
+                    data_sub[stratify_by].mean(),
+                ]
+
             if SpatialDataset.is_valid_split(split_info, eps, train_lb):
-                print("Split constraints satisfied\nPatch proportions and Positive patch proportions:")
+                print(
+                    "Split constraints satisfied\nPatch proportions and Positive patch proportions:"
+                )
                 for split, dat in split_info.items():
                     print(f"{split:<10}: {dat[0]:>5.3f}, {dat[1]:>5.3f}")
                 return patient_split
@@ -150,7 +182,7 @@ class SpatialDataset:
 
     def summarize_split(self):
         pass
-    
+
     def save_splits(self, patient_split, labelname=celltype.cd8.value):
         import torch
         from tqdm import tqdm
@@ -162,15 +194,21 @@ class SpatialDataset:
         }
 
         # read in image data
-        with h5py.File(self.data_path, 'r') as f:
-            patches = f['images'][:]
+        with h5py.File(self.data_path, "r") as f:
+            patches = f["images"][:]
 
         # iterate over splits and save patches
-        for split_name in tqdm([splits.train.value, splits.validate.value, splits.test.value], desc="Saving splits"):
+        for split_name in tqdm(
+            [splits.train.value, splits.validate.value, splits.test.value],
+            desc="Saving splits",
+        ):
             index = split_index[split_name]
             _patches = patches[index, ...]
             _labels = self.metadata.iloc[index][labelname].values
             _ids = self.metadata.iloc[index][colname.patch_id.value].values
+            metadata_to_save = self.metadata.iloc[index][
+                [colname.patch_id.value, labelname]
+            ]
 
             # make directories for the split
             _path = os.path.join(self.save_dir, split_name)
@@ -178,10 +216,15 @@ class SpatialDataset:
                 os.makedirs(_path)
                 os.makedirs(os.path.join(_path, "0"))
                 os.makedirs(os.path.join(_path, "1"))
-            
+
+            # save metadata
+            metadata_to_save.to_csv(os.path.join(_path, "label.csv"))
+
             # save patches
             nimage = len(_labels)
-            for i in tqdm(range(nimage), desc=f"Saving images for {split_name} split", leave=False):
+            for i in tqdm(
+                range(nimage), desc=f"Saving images for {split_name} split", leave=False
+            ):
                 sparse_tensor = torch.tensor(_patches[i, ...]).to_sparse()
                 save_path = os.path.join(_path, f"{_labels[i]}/patch_{_ids[i]}")
                 # Save the sparse tensor
@@ -192,9 +235,8 @@ class SpatialDataset:
                 normalization_params = {
                     "mean": np.mean(_patches, axis=(0, 1, 2)).tolist(),
                     "stdev": np.std(_patches, axis=(0, 1, 2)).tolist(),
-                    }
-                
-        # save normalization parameters to json
-        with open(os.path.join(self.save_dir, "normalization_params.json"), 'w') as f:
-            json.dump(normalization_params, f)
+                }
 
+        # save normalization parameters to json
+        with open(os.path.join(self.save_dir, "normalization_params.json"), "w") as f:
+            json.dump(normalization_params, f)

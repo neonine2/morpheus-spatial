@@ -5,14 +5,16 @@ import numpy as np
 import torch
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
-from ..constants import splits
+from ..constants import splits, colname
+
 
 class TorchDataset(Dataset):
     "Characterizes a dataset for PyTorch"
 
-    def __init__(self, img_dir, transform=None, target_transform=None):
+    def __init__(self, img_dir, labelname, transform=None, target_transform=None):
         self.img_dir = img_dir
         self.img_labels = pd.read_csv(os.path.join(self.img_dir, "label.csv"))
+        self.labelname = labelname
         self.transform = transform
         self.target_transform = target_transform
 
@@ -23,9 +25,11 @@ class TorchDataset(Dataset):
     def __getitem__(self, idx):
         "Generates one sample of data"
         # Get data and label
-        label = self.img_labels.iloc[idx, 1]
-        img_path = os.path.join(self.img_dir, f"{label}/patch_{idx}.npy")
+        label = self.img_labels.iloc[idx][self.labelname]
+        id = self.img_labels.iloc[idx][colname.patch_id.value]
+        img_path = os.path.join(self.img_dir, f"{label}/patch_{id}.npy")
         image = np.load(img_path)
+
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
@@ -35,16 +39,16 @@ class TorchDataset(Dataset):
 
 def make_torch_dataloader(
     data_path: str,
+    labelname: str,
+    model_arch="unet",
     normalization_params_path=None,
-    model="unet",
     params={"batch_size": 64, "num_workers": 4, "pin_memory": True},
 ):
 
-    # Load the data info which should contain the channel-wise mean and stdev of the training data
     if normalization_params_path is None:
         normalization_params_path = os.path.join(data_path, "normalization_params.json")
 
-    # load the normalization parameters from the json file
+    # Load channel-wise mean and stdev of the training data
     with open(normalization_params_path, "r") as f:
         normalization_params = json.load(f)
 
@@ -56,12 +60,7 @@ def make_torch_dataloader(
         ),
         transforms.ConvertImageDtype(torch.float),
     ]
-    if model == "mlp" or model == "lr":
-        train_transform = transforms.Compose(
-            transformation + [lambda x: torch.mean(x, dim=(1, 2))]
-        )
-        test_transform = train_transform
-    else:
+    if model_arch == "unet":
         train_transform = transforms.Compose(
             transformation
             + [
@@ -71,16 +70,27 @@ def make_torch_dataloader(
             ]
         )
         test_transform = transforms.Compose(transformation)
+    else:
+        train_transform = transforms.Compose(
+            transformation + [lambda x: torch.mean(x, dim=(1, 2))]
+        )
+        test_transform = train_transform
 
     # Define the datasets
     training_data = TorchDataset(
-        os.path.join(data_path, splits.train.value), transform=train_transform
+        os.path.join(data_path, splits.train.value),
+        labelname=labelname,
+        transform=train_transform,
     )
     validation_data = TorchDataset(
-        os.path.join(data_path, splits.validate.value), transform=test_transform
+        os.path.join(data_path, splits.validate.value),
+        labelname=labelname,
+        transform=test_transform,
     )
     testing_data = TorchDataset(
-        os.path.join(data_path, splits.test.value), transform=test_transform
+        os.path.join(data_path, splits.test.value),
+        labelname=labelname,
+        transform=test_transform,
     )
 
     # Define the dataloaders

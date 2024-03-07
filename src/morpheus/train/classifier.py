@@ -7,11 +7,11 @@ import torchmetrics.functional.classification as tfcl
 
 class PatchClassifier(pl.LightningModule):
     def __init__(
-        self, in_channels, img_size=16, model_architecture="unet", num_target_classes=2
+        self, in_channels, img_size=(16, 16), model_arch="unet", num_target_classes=2
     ):
         super().__init__()
         self.classes = num_target_classes
-        arch = model_architecture.lower()
+        arch = model_arch.lower()
         if arch == "unet":
             backbone = torch.hub.load(
                 "mateuszbuda/brain-segmentation-pytorch",
@@ -23,7 +23,7 @@ class PatchClassifier(pl.LightningModule):
             classifier = torch.nn.Sequential()
             classifier.add_module("flatten", nn.Flatten())
             classifier.add_module(
-                "fc", nn.Linear(img_size * img_size, num_target_classes)
+                "fc", nn.Linear(img_size[0] * img_size[1], num_target_classes)
             )
             classifier.add_module("act", nn.Softmax())
             self.predictor = nn.Sequential(*[backbone, classifier])
