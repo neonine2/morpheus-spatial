@@ -23,3 +23,9 @@ Morpheus is an integrated deep learning framework that takes large scale spatial
 - Other dependencies listed in `requirements.txt`
 
 ### Installation
+
+Run the following in the command line
+
+```bash
+pip install morpheus-spatial
+```
