@@ -1,18 +1,26 @@
 import torch
 from torch import nn
 from torch.nn import functional as F
-import pytorch_lightning as pl
+import lightning as L
 import torchmetrics.functional.classification as tfcl
 
 
-class PatchClassifier(pl.LightningModule):
+class PatchClassifier(L.LightningModule):
     def __init__(
-        self, in_channels, img_size=(16, 16), model_arch="unet", num_target_classes=2
+        self,
+        in_channels,
+        img_size=(16, 16),
+        model_arch="unet",
+        num_target_classes=2,
+        optimizer="adam",
+        optimizer_params={"lr": 1e-3},
     ):
         super().__init__()
         self.classes = num_target_classes
-        arch = model_arch.lower()
-        if arch == "unet":
+        self.optimizer = optimizer
+        self.optimizer_params = optimizer_params
+        self.model_arch = model_arch.lower()
+        if self.model_arch == "unet":
             backbone = torch.hub.load(
                 "mateuszbuda/brain-segmentation-pytorch",
                 "unet",
@@ -25,18 +33,18 @@ class PatchClassifier(pl.LightningModule):
             classifier.add_module(
                 "fc", nn.Linear(img_size[0] * img_size[1], num_target_classes)
             )
-            classifier.add_module("act", nn.Softmax())
+            classifier.add_module("act", nn.Softmax(dim=1))
             self.predictor = nn.Sequential(*[backbone, classifier])
-        elif arch == "mlp":
+        elif self.model_arch == "mlp":
             self.predictor = nn.Sequential(
                 nn.Linear(in_channels, 30),
                 nn.ReLU(),
                 nn.Linear(30, 10),
                 nn.ReLU(),
                 nn.Linear(10, num_target_classes),
-                nn.Softmax(),
+                nn.Softmax(dim=1),
             )
-        elif arch == "lr":
+        elif self.model_arch == "lr":
             self.predictor = nn.Sequential(nn.Linear(in_channels, 1), nn.Sigmoid())
 
     def forward(self, x):
@@ -45,8 +53,8 @@ class PatchClassifier(pl.LightningModule):
         return pred
 
     def configure_optimizers(self):
-        # optimizer = torch.optim.SGD(self.parameters(), lr=1e-2, momentum=0.9, nesterov=True)
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        if self.optimizer == "adam":
+            optimizer = torch.optim.Adam(self.parameters(), **self.optimizer_params)
         return optimizer
 
     def execute_and_get_metric(self, batch, mode):
@@ -83,7 +91,7 @@ class PatchClassifier(pl.LightningModule):
         target = torch.argmax(target, dim=1).float()
         test_acc = tfcl.binary_accuracy(preds, target)
         bmc = tfcl.binary_matthews_corrcoef(preds, target).float()
-        auroc = tfcl.binary_auroc(preds, target)
+        auroc = tfcl.binary_auroc(preds, target.long())
         f1 = tfcl.binary_f1_score(preds, target)
         precision = tfcl.binary_precision(preds, target)
         recall = tfcl.binary_recall(preds, target)

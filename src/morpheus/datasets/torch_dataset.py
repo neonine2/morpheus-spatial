@@ -13,7 +13,11 @@ class TorchDataset(Dataset):
 
     def __init__(self, img_dir, labelname, transform=None, target_transform=None):
         self.img_dir = img_dir
-        self.img_labels = pd.read_csv(os.path.join(self.img_dir, "label.csv"))
+        self.img_labels = (
+            pd.read_csv(os.path.join(self.img_dir, "label.csv"))
+            .sample(frac=1)
+            .reset_index(drop=True)
+        )
         self.labelname = labelname
         self.transform = transform
         self.target_transform = target_transform
@@ -34,15 +38,16 @@ class TorchDataset(Dataset):
             image = self.transform(image)
         if self.target_transform:
             label = self.target_transform(label)
+
         return image, label
 
 
 def make_torch_dataloader(
     data_path: str,
     labelname: str,
-    model_arch="unet",
+    params,
+    model_arch,
     normalization_params_path=None,
-    params={"batch_size": 64, "num_workers": 4, "pin_memory": True},
 ):
 
     if normalization_params_path is None:
@@ -56,7 +61,8 @@ def make_torch_dataloader(
     transformation = [
         transforms.ToTensor(),
         transforms.Normalize(
-            normalization_params["mean"], normalization_params["stdev"]
+            normalization_params["mean"],
+            normalization_params["stdev"],
         ),
         transforms.ConvertImageDtype(torch.float),
     ]

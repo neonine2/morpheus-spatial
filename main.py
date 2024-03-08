@@ -1,7 +1,10 @@
 import morpheus as mp
 from morpheus.train import train_classifier
+from lightning.pytorch import seed_everything
 
 if __name__ == "__main__":
+    # set random seed
+    seed_everything(42, workers=True)
 
     data_path = (
         "/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/temp/crc.h5"

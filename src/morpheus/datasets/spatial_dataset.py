@@ -44,13 +44,14 @@ class SpatialDataset:
     def generate_data_splits(
         self,
         stratify_by: str,
-        train_size: float,
-        val_size: float,
-        test_size: float,
+        train_size=None,
+        val_size=None,
+        test_size=None,
         save_dir=None,
         random_state=None,
         shuffle=True,
         tolerance={"eps": 0.01, "train_lb": 0.5, "ntol": 100},
+        given_splits=None,
         save=True,
     ):
         """
@@ -94,15 +95,23 @@ class SpatialDataset:
             return
 
         print("Generating data splits...")
-        patient_split = self.get_patient_splits(
-            stratify_by,
-            train_size,
-            val_size,
-            test_size,
-            random_state,
-            shuffle,
-            **tolerance,
-        )
+        if given_splits is not None:
+            patient_split = {
+                val: np.array(given_splits[idx])
+                for idx, val in enumerate(
+                    [splits.train.value, splits.validate.value, splits.test.value]
+                )
+            }
+        else:
+            patient_split = self.get_patient_splits(
+                stratify_by,
+                train_size,
+                val_size,
+                test_size,
+                random_state,
+                shuffle,
+                **tolerance,
+            )
 
         if patient_split is None:
             print(
@@ -184,7 +193,7 @@ class SpatialDataset:
         pass
 
     def save_splits(self, patient_split, labelname=celltype.cd8.value):
-        import torch
+        # import torch
         from tqdm import tqdm
 
         # obtain patch index corresponding to patient split
@@ -207,7 +216,12 @@ class SpatialDataset:
             _labels = self.metadata.iloc[index][labelname].values
             _ids = self.metadata.iloc[index][colname.patch_id.value].values
             metadata_to_save = self.metadata.iloc[index][
-                [colname.patch_id.value, labelname]
+                [
+                    colname.patch_id.value,
+                    labelname,
+                    colname.patient_id.value,
+                    colname.image_id.value,
+                ]
             ]
 
             # make directories for the split
@@ -218,17 +232,18 @@ class SpatialDataset:
                 os.makedirs(os.path.join(_path, "1"))
 
             # save metadata
-            metadata_to_save.to_csv(os.path.join(_path, "label.csv"))
+            metadata_to_save.to_csv(os.path.join(_path, "label.csv"), index=False)
 
             # save patches
             nimage = len(_labels)
             for i in tqdm(
                 range(nimage), desc=f"Saving images for {split_name} split", leave=False
             ):
-                sparse_tensor = torch.tensor(_patches[i, ...]).to_sparse()
-                save_path = os.path.join(_path, f"{_labels[i]}/patch_{_ids[i]}")
+                # sparse_tensor = torch.tensor(_patches[i, ...]).to_sparse()
+                save_path = os.path.join(_path, f"{_labels[i]}/patch_{_ids[i]}.npy")
                 # Save the sparse tensor
-                torch.save(sparse_tensor, save_path)
+                np.save(save_path, _patches[i, ...])
+                # torch.save(sparse_tensor, save_path)
 
             # save normalization parameters
             if split_name == splits.train.value:
