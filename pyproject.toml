@@ -12,6 +12,8 @@ lightning = "^2.2.0.post0"
 pandas = "^2.2.1"
 torchvision = "^0.17.1"
 h5py = "^3.10.0"
+dill = "^0.3.8"
+scikit-learn = "^1.4.1.post1"
 
 
 [tool.poetry.group.test.dependencies]
