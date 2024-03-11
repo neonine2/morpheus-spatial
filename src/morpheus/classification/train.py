@@ -8,25 +8,28 @@ from ..datasets.spatial_dataset import SpatialDataset
 
 
 def train(
-    model: PatchClassifier,
-    dataset: SpatialDataset,
-    labelname: str,
-    save_model_dir=None,
-    dataloader_params={"batch_size": 128, "num_workers": 4, "pin_memory": True},
-    trainer_params={
-        "max_epochs": 80,
-        "accelerator": "auto",
-        "logger": False,
-    },
+        model: PatchClassifier,
+        dataset: SpatialDataset,
+        label_name: str,
+        save_model_dir=None,
+        dataloader_params=None,
+        trainer_params=None
 ):
-
+    if trainer_params is None:
+        trainer_params = {
+            "max_epochs": 80,
+            "accelerator": "auto",
+            "logger": False,
+        }
+    if dataloader_params is None:
+        dataloader_params = {"batch_size": 128, "num_workers": 4, "pin_memory": True}
     if save_model_dir is None:
         save_model_dir = os.path.join(os.path.dirname(dataset.data_path), "models")
 
     # initialize dataloaders
     train_loader, val_loader, test_loader = make_torch_dataloader(
         dataset.save_dir,
-        labelname=labelname,
+        label_name=label_name,
         model_arch=model.model_arch,
         params=dataloader_params,
     )

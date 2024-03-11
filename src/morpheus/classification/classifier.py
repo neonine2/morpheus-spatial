@@ -1,11 +1,11 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
-import lightning as L
-import torchmetrics.functional.classification as tfcl
+from torch.nn import functional
+import lightning as light
+import torchmetrics.functional.classification as tf_classifier
 
 
-class PatchClassifier(L.LightningModule):
+class PatchClassifier(light.LightningModule):
     def __init__(
         self,
         in_channels,
@@ -13,13 +13,22 @@ class PatchClassifier(L.LightningModule):
         model_arch="unet",
         num_target_classes=2,
         optimizer="adam",
-        optimizer_params={"lr": 1e-3},
+        optimizer_params=None,
     ):
         super().__init__()
+        self.predictor = None
+        if optimizer_params is None:
+            optimizer_params = {"lr": 1e-3}
         self.classes = num_target_classes
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
         self.model_arch = model_arch.lower()
+        self.build_model(in_channels,img_size)
+
+    def build_model(self, in_channels, img_size):
+        """
+        Selects and builds the chosen model architecture.
+        """
         if self.model_arch == "unet":
             backbone = torch.hub.load(
                 "mateuszbuda/brain-segmentation-pytorch",
@@ -31,7 +40,7 @@ class PatchClassifier(L.LightningModule):
             classifier = torch.nn.Sequential()
             classifier.add_module("flatten", nn.Flatten())
             classifier.add_module(
-                "fc", nn.Linear(img_size[0] * img_size[1], num_target_classes)
+                "fc", nn.Linear(img_size[0] * img_size[1], self.classes)
             )
             classifier.add_module("act", nn.Softmax(dim=1))
             self.predictor = nn.Sequential(*[backbone, classifier])
@@ -41,28 +50,27 @@ class PatchClassifier(L.LightningModule):
                 nn.ReLU(),
                 nn.Linear(30, 10),
                 nn.ReLU(),
-                nn.Linear(10, num_target_classes),
+                nn.Linear(10, self.classes),
                 nn.Softmax(dim=1),
             )
         elif self.model_arch == "lr":
             self.predictor = nn.Sequential(nn.Linear(in_channels, 1), nn.Sigmoid())
+        else:
+            raise ValueError(f"Invalid model architecture: {self.model_arch}")
 
     def forward(self, x):
         self.predictor.eval()
-        pred = self.predictor(x)
-        return pred
+        return self.predictor(x)
 
     def configure_optimizers(self):
         if self.optimizer == "adam":
-            optimizer = torch.optim.Adam(self.parameters(), **self.optimizer_params)
-        return optimizer
+            return torch.optim.Adam(self.parameters(), **self.optimizer_params)
 
     def execute_and_get_metric(self, batch, mode):
         x, target = batch
-        target = F.one_hot(target, num_classes=self.classes).float()
-        pred = self.predictor(x)
-        metric_dict = self.log_metrics(mode, pred, target)
-        return metric_dict
+        target = functional.one_hot(target, num_classes=self.classes).float()
+        predictor = self.predictor(x)
+        return self.log_metrics(mode, predictor, target)
 
     def training_step(self, train_batch, batch_idx):
         metric_dict = self.execute_and_get_metric(train_batch, "train")
@@ -85,16 +93,16 @@ class PatchClassifier(L.LightningModule):
             new_col = 1 - preds[:, 0]
             # Append the new column to the original matrix
             preds = torch.column_stack((preds, new_col))
-        bce = F.binary_cross_entropy_with_logits(preds, target)
+        bce = functional.binary_cross_entropy_with_logits(preds, target)
 
         preds = torch.argmax(preds, dim=1).float()
         target = torch.argmax(target, dim=1).float()
-        test_acc = tfcl.binary_accuracy(preds, target)
-        bmc = tfcl.binary_matthews_corrcoef(preds, target).float()
-        auroc = tfcl.binary_auroc(preds, target.long())
-        f1 = tfcl.binary_f1_score(preds, target)
-        precision = tfcl.binary_precision(preds, target)
-        recall = tfcl.binary_recall(preds, target)
+        test_acc = tf_classifier.binary_accuracy(preds, target)
+        bmc = tf_classifier.binary_matthews_corrcoef(preds, target).float()
+        auroc = tf_classifier.binary_auroc(preds, target.long())
+        f1 = tf_classifier.binary_f1_score(preds, target)
+        precision = tf_classifier.binary_precision(preds, target)
+        recall = tf_classifier.binary_recall(preds, target)
         metric_dict = {
             mode + "_bce": bce,
             mode + "_precisio1n": precision,

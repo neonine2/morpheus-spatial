@@ -5,33 +5,33 @@ import numpy as np
 import torch
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
-from ..constants import splits, colname
+from ..constants import Splits, ColName
 
 
 class TorchDataset(Dataset):
-    "Characterizes a dataset for PyTorch"
+    """Characterizes a dataset for PyTorch"""
 
-    def __init__(self, img_dir, labelname, transform=None, target_transform=None):
+    def __init__(self, img_dir, label_name, transform=None, target_transform=None):
         self.img_dir = img_dir
         self.img_labels = (
             pd.read_csv(os.path.join(self.img_dir, "label.csv"))
             .sample(frac=1)
             .reset_index(drop=True)
         )
-        self.labelname = labelname
+        self.label_name = label_name
         self.transform = transform
         self.target_transform = target_transform
 
     def __len__(self):
-        "Denotes the total number of samples"
+        """Denotes the total number of samples"""
         return len(self.img_labels)
 
     def __getitem__(self, idx):
-        "Generates one sample of data"
+        """Generates one sample of data"""
         # Get data and label
-        label = self.img_labels.iloc[idx][self.labelname]
-        id = self.img_labels.iloc[idx][colname.patch_id.value]
-        img_path = os.path.join(self.img_dir, f"{label}/patch_{id}.npy")
+        label = self.img_labels.iloc[idx][self.label_name]
+        patch_id = self.img_labels.iloc[idx][ColName.patch_id.value]
+        img_path = os.path.join(self.img_dir, f"{label}/patch_{patch_id}.npy")
         image = np.load(img_path)
 
         if self.transform:
@@ -44,7 +44,7 @@ class TorchDataset(Dataset):
 
 def make_torch_dataloader(
     data_path: str,
-    labelname: str,
+    label_name: str,
     params,
     model_arch,
     normalization_params_path=None,
@@ -84,18 +84,18 @@ def make_torch_dataloader(
 
     # Define the datasets
     training_data = TorchDataset(
-        os.path.join(data_path, splits.train.value),
-        labelname=labelname,
+        os.path.join(data_path, Splits.train.value),
+        label_name=label_name,
         transform=train_transform,
     )
     validation_data = TorchDataset(
-        os.path.join(data_path, splits.validate.value),
-        labelname=labelname,
+        os.path.join(data_path, Splits.validate.value),
+        label_name=label_name,
         transform=test_transform,
     )
     testing_data = TorchDataset(
-        os.path.join(data_path, splits.test.value),
-        labelname=labelname,
+        os.path.join(data_path, Splits.test.value),
+        label_name=label_name,
         transform=test_transform,
     )
 
