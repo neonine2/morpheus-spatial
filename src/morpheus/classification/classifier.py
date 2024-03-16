@@ -1,8 +1,8 @@
+import lightning as light
 import torch
+import torchmetrics.functional.classification as tf_classifier
 from torch import nn
 from torch.nn import functional
-import lightning as light
-import torchmetrics.functional.classification as tf_classifier
 
 
 class PatchClassifier(light.LightningModule):
@@ -23,7 +23,7 @@ class PatchClassifier(light.LightningModule):
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
         self.model_arch = model_arch.lower()
-        self.build_model(in_channels,img_size)
+        self.build_model(in_channels, img_size)
 
     def build_model(self, in_channels, img_size):
         """

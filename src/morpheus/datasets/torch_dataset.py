@@ -1,11 +1,13 @@
-import os
 import json
-import pandas as pd
+import os
+
 import numpy as np
+import pandas as pd
 import torch
-from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
-from ..constants import Splits, ColName
+from torchvision import transforms
+
+from ..configuration.Types import ColName, Splits
 
 
 class TorchDataset(Dataset):

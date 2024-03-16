@@ -1,19 +1,20 @@
 import os
+
 from lightning import Trainer
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, TQDMProgressBar
 
-from .classifier import PatchClassifier
-from ..datasets.torch_dataset import make_torch_dataloader
 from ..datasets.spatial_dataset import SpatialDataset
+from ..datasets.torch_dataset import make_torch_dataloader
+from .classifier import PatchClassifier
 
 
 def train(
-        model: PatchClassifier,
-        dataset: SpatialDataset,
-        label_name: str,
-        save_model_dir=None,
-        dataloader_params=None,
-        trainer_params=None
+    model: PatchClassifier,
+    dataset: SpatialDataset,
+    label_name: str,
+    save_model_dir=None,
+    dataloader_params=None,
+    trainer_params=None,
 ):
     if trainer_params is None:
         trainer_params = {
