@@ -130,7 +130,7 @@ class SpatialDataset:
         if save:
             print("Saving splits...")
             self.save_splits(patient_split, labelname=stratify_by)
-            self.labelname = stratify_by
+            self.label_name = stratify_by
             print(f"Data splits saved to {self.save_dir}")
         return patient_split
 
@@ -295,7 +295,7 @@ class SpatialDataset:
         image_paths = metadata[colname.patch_id.value].apply(
             lambda x: os.path.join(
                 self.save_dir,
-                f"{x[self.labelname]}/patch_{x[colname.image_id.value]}.npy",
+                f"{x[self.label_name]}/patch_{x[colname.image_id.value]}.npy",
             ),
             axis=1,
         )
@@ -369,7 +369,7 @@ class SpatialDataset:
             # Process each image sequentially
             for i in range(num_images):
                 img, patch_id = SpatialDataset.load_single_image(images[i])
-                label = self.metadata[self.labelname].iloc[patch_id]
+                label = self.metadata[self.label_name].iloc[patch_id]
                 generate_cf(
                     original_patch=img,
                     original_label=label,
