@@ -1,58 +1,17 @@
 import os
 import numpy as np
-import h5py
 import torch
-import multiprocessing
-from functools import partial
-
 from .cf import Counterfactual
-from ..classification import PatchClassifier
-from morpheus import SpatialDataset
 
 EPSILON = torch.tensor(1e-20, dtype=torch.float32)
-
-
-def process_data_hdf5(
-    dataset: SpatialDataset, generate_cf_params: dict, parallel=False, num_workers=None
-):
-    with h5py.File(dataset.data_path, "r") as file:
-        # Get the dataset containing the images
-        image_dataset = file["images"]
-
-        # Get the number of images in the dataset
-        num_images = image_dataset.shape[0]
-
-        if parallel:
-            # Create a multiprocessing pool with the specified number of workers
-            pool = multiprocessing.Pool(processes=num_workers)
-
-            # Create a partial function with the generate_cf parameters
-            process_image_partial = partial(
-                generate_cf, generate_cf_params=generate_cf_params
-            )
-
-            # Apply the process_image function to each image in parallel
-            pool.starmap(
-                process_image_partial,
-                [(image_dataset[i], file["labels"][i]) for i in range(num_images)],
-            )
-
-            # Close the multiprocessing pool
-            pool.close()
-            pool.join()
-        else:
-            # Process each image sequentially
-            for i in range(num_images):
-                generate_cf(image_dataset[i], file["labels"][i], **generate_cf_params)
 
 
 def generate_cf(
     original_patch: np.ndarray,
     original_label: np.ndarray,
-    model_path: str,
+    model: torch.nn.Module,
     channel_to_perturb: list,
     data_dict: dict,
-    model_arch: str = None,
     X_train_path: str = None,
     optimization_params: dict = None,
     save_dir: str = None,
@@ -65,10 +24,9 @@ def generate_cf(
     Args:
          original_patch (np.ndarray): Original patch to be explained.
          original_label (np.ndarray): Original label of the patch.
-         model_path (str): Path to the model.
+         model (torch.nn.Module): Model to be explained.
          channel_to_perturb (list): List of channels to perturb.
          data_dict (dict): Dictionary containing the mean and standard deviation of each channel.
-         model_arch (str, optional): Model architecture. Either 'mlp' or 'cnn'. Defaults to None.
          X_train_path (str, optional): Path to the training data. Defaults to None.
          optimization_params (dict, optional): Dictionary containing the parameters for the optimization. Defaults to {}.
          save_dir (str, optional): Directory where output will be saved. Defaults to None.
@@ -89,14 +47,12 @@ def generate_cf(
     original_label = torch.from_numpy(original_label).long()
     X_mean = torch.mean(original_patch, dim=(0, 1))
 
-    if model_arch == "mlp":
+    if model.arch == "mlp":
         original_patch = X_mean
-
-    model = load_model(model_path, C, H, model_arch)
 
     # Adding init layer to model
     unnormed_mean = X_mean * sigma + mu
-    if model_arch == "mlp":
+    if model.arch == "mlp":
         altered_model = lambda x: torch.nn.functional.softmax(model(x), dim=1)
         input_transform = lambda x: x
     else:
@@ -145,7 +101,7 @@ def generate_cf(
             )
         X_train = np.load(X_train_path)
         X_train = (X_train - mu) / sigma
-        if model_arch == "mlp":
+        if model.arch == "mlp":
             X_t = torch.from_numpy(np.mean(X_train, axis=(1, 2))).float()
         else:
             X_t = torch.permute(torch.from_numpy(X_train), (0, 3, 1, 2)).float()
@@ -167,9 +123,9 @@ def generate_cf(
         # manually compute probability of cf
         cf = input_transform(torch.from_numpy(cf[None, :]))
         counterfactual_probabilities = (
-            altered_model(cf) if model_arch == "mlp" else model(cf)
+            altered_model(cf) if model.arch == "mlp" else model(cf)
         )
-        if model_arch != "mlp":
+        if model.arch != "mlp":
             cf = torch.permute(cf, (0, 2, 3, 1))
 
         print(f"Counterfactual probability: {cf_prob}")
@@ -193,26 +149,6 @@ def generate_cf(
                 channel_to_perturb=channel_to_perturb,
             )
     return explanation
-
-
-def load_model(model_path: str, in_channels: int, img_size: int, model_arch: str):
-    """
-    Load the trained model.
-
-    Args:
-        model_path (str): Path to the model checkpoint.
-        in_channels (int): Number of input channels.
-        img_size (int): Size of the input image.
-        model_arch (str): Model architecture. Either 'mlp' or 'cnn'.
-
-    Returns:
-        torch.nn.Module: Loaded model.
-    """
-    model = PatchClassifier.load_from_checkpoint(
-        model_path, in_channels=in_channels, img_size=img_size, modelArch=model_arch
-    )
-    model.eval()
-    return model
 
 
 def alter_image(y, unnormed_patch, mu, sigma, unnormed_mean):

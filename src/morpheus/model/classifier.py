@@ -10,7 +10,7 @@ class PatchClassifier(L.LightningModule):
         self,
         in_channels,
         img_size=(16, 16),
-        model_arch="unet",
+        arch="unet",
         num_target_classes=2,
         optimizer="adam",
         optimizer_params={"lr": 1e-3},
@@ -19,8 +19,8 @@ class PatchClassifier(L.LightningModule):
         self.classes = num_target_classes
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
-        self.model_arch = model_arch.lower()
-        if self.model_arch == "unet":
+        self.arch = arch.lower()
+        if self.arch == "unet":
             backbone = torch.hub.load(
                 "mateuszbuda/brain-segmentation-pytorch",
                 "unet",
@@ -35,7 +35,7 @@ class PatchClassifier(L.LightningModule):
             )
             classifier.add_module("act", nn.Softmax(dim=1))
             self.predictor = nn.Sequential(*[backbone, classifier])
-        elif self.model_arch == "mlp":
+        elif self.arch == "mlp":
             self.predictor = nn.Sequential(
                 nn.Linear(in_channels, 30),
                 nn.ReLU(),
@@ -44,7 +44,7 @@ class PatchClassifier(L.LightningModule):
                 nn.Linear(10, num_target_classes),
                 nn.Softmax(dim=1),
             )
-        elif self.model_arch == "lr":
+        elif self.arch == "lr":
             self.predictor = nn.Sequential(nn.Linear(in_channels, 1), nn.Sigmoid())
 
     def forward(self, x):
