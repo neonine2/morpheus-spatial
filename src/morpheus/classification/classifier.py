@@ -10,7 +10,7 @@ class PatchClassifier(light.LightningModule):
         self,
         in_channels,
         img_size=(16, 16),
-        model_arch="unet",
+        arch="unet",
         num_target_classes=2,
         optimizer="adam",
         optimizer_params=None,
@@ -22,14 +22,14 @@ class PatchClassifier(light.LightningModule):
         self.classes = num_target_classes
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
-        self.model_arch = model_arch.lower()
+        self.arch = arch.lower()
         self.build_model(in_channels, img_size)
 
     def build_model(self, in_channels, img_size):
         """
         Selects and builds the chosen model architecture.
         """
-        if self.model_arch == "unet":
+        if self.arch == "unet":
             backbone = torch.hub.load(
                 "mateuszbuda/brain-segmentation-pytorch",
                 "unet",
@@ -44,7 +44,7 @@ class PatchClassifier(light.LightningModule):
             )
             classifier.add_module("act", nn.Softmax(dim=1))
             self.predictor = nn.Sequential(*[backbone, classifier])
-        elif self.model_arch == "mlp":
+        elif self.arch == "mlp":
             self.predictor = nn.Sequential(
                 nn.Linear(in_channels, 30),
                 nn.ReLU(),
@@ -53,7 +53,7 @@ class PatchClassifier(light.LightningModule):
                 nn.Linear(10, self.classes),
                 nn.Softmax(dim=1),
             )
-        elif self.model_arch == "lr":
+        elif self.arch == "lr":
             self.predictor = nn.Sequential(nn.Linear(in_channels, 1), nn.Sigmoid())
         else:
             raise ValueError(f"Invalid model architecture: {self.model_arch}")

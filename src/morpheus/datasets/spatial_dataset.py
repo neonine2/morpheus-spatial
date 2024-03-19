@@ -5,7 +5,10 @@ import h5py
 import numpy as np
 import pandas as pd
 
+import multiprocessing
+from functools import partial
 from ..configuration.Types import CellType, ColName, Splits
+from ..counterfactual import generate_cf
 
 
 class SpatialDataset:
@@ -27,7 +30,7 @@ class SpatialDataset:
         # check that the data is consistent
         if len(self.metadata) != self.metadata[ColName.patch_id.value].nunique():
             raise ValueError("Metadata contains duplicate patch IDs")
-        if len(self.channel_names) != self.data_dim[-1]:
+        if len(self.channel_names) != self.n_channels:
             raise ValueError("Number of channel names do not match data dimensions")
 
         # check key metadata columns are present
@@ -42,7 +45,12 @@ class SpatialDataset:
                 self.channel_names = [
                     name.decode("utf-8") for name in f["channel_names"][:]
                 ]
-                self.data_dim = f["images"].shape
+                data_shape = f["images"].shape
+                self.n_patches, self.img_size, self.n_channels = (
+                    data_shape[0],
+                    data_shape[1:3],
+                    data_shape[3],
+                )
         except Exception as e:
             print(f"Error loading data: {e}")
 
@@ -129,6 +137,7 @@ class SpatialDataset:
         if save:
             print("Saving splits...")
             self.save_splits(patient_split, label_name=stratify_by)
+            self.label_name = stratify_by
             print(f"Data splits saved to {self.save_dir}")
         return patient_split
 
@@ -265,3 +274,116 @@ class SpatialDataset:
         # save normalization parameters to json
         with open(os.path.join(self.save_dir, "normalization_params.json"), "w") as f:
             json.dump(normalization_params, f)
+
+    def load_model(self, model_path: str, model_arch="unet"):
+        """
+        Load the trained model.
+
+        Args:
+            model_path (str): Path to the model checkpoint.
+            model_arch (str): Model architecture. Either 'mlp' or 'cnn'.
+
+        Returns:
+            torch.nn.Module: Loaded model.
+        """
+        from ..model import PatchClassifier
+
+        model = PatchClassifier.load_from_checkpoint(
+            model_path,
+            in_channels=self.n_channel,
+            img_size=self.img_size,
+            arch=model_arch,
+        )
+        model.eval()
+        return model
+
+    def load_from_metadata(self, metadata):
+        """
+        Load all images with patch_ids in the list from the dataset.
+        """
+        # join the label column with the patch_id column to form the image path
+        image_paths = metadata[colname.patch_id.value].apply(
+            lambda x: os.path.join(
+                self.save_dir,
+                f"{x[self.label_name]}/patch_{x[colname.image_id.value]}.npy",
+            ),
+            axis=1,
+        )
+        images = [self.load_single_image(path, id=False) for path in image_paths]
+        return images
+
+    @staticmethod
+    def load_single_image(path, id=True):
+        """
+        Load a single image from the dataset.
+
+        Args:
+            path (str): Path to the image file.
+            id (bool): Whether to return the image ID.
+
+        Returns:
+            np.ndarray: Image array.
+        """
+        image = np.load(path)
+        if id:
+            return image, int(
+                os.path.splitext(os.path.basename(path))[0].split("_")[-1]
+            )
+        else:
+            return image
+
+    def get_counterfactual(
+        self,
+        images: list,
+        model,
+        channel_to_perturb: list,
+        optimization_params: dict,
+        save_dir: str = None,
+        parallel: bool = False,
+        num_workers: bool = None,
+    ):
+        """
+        Generate counterfactuals for the dataset.
+
+        Args:
+            cf_params (dict): Dictionary containing the parameters for the counterfactual generation.
+            parallel (bool): Whether to generate counterfactuals in parallel.
+            num_workers (int): Number of workers to use for parallel processing.
+        """
+
+        num_images = len(images)
+
+        # Create save directory
+        if save_dir is None:
+            save_dir = os.path.join(self.save_dir, "cf")
+
+        if parallel:
+            # Create a multiprocessing pool with the specified number of workers
+            pool = multiprocessing.Pool(processes=num_workers)
+
+            # Create a partial function with the generate_cf parameters
+            process_image_partial = partial(
+                generate_cf, optimization_params=optimization_params
+            )
+
+            # Apply the process_image function to each image in parallel
+            pool.starmap(
+                process_image_partial,
+                [(images[i], self.metadata["labels"][i]) for i in range(num_images)],
+            )
+
+            # Close the multiprocessing pool
+            pool.close()
+            pool.join()
+        else:
+            # Process each image sequentially
+            for i in range(num_images):
+                img, patch_id = SpatialDataset.load_single_image(images[i])
+                label = self.metadata[self.label_name].iloc[patch_id]
+                generate_cf(
+                    original_patch=img,
+                    original_label=label,
+                    model=model,
+                    channel_to_perturb=channel_to_perturb,
+                    optimization_params=optimization_params,
+                )
