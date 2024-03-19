@@ -13,14 +13,14 @@ from ..configuration.Types import ColName, Splits
 class TorchDataset(Dataset):
     """Characterizes a dataset for PyTorch"""
 
-    def __init__(self, img_dir, label__name, transform=None, target_transform=None):
+    def __init__(self, img_dir, label_name, transform=None, target_transform=None):
         self.img_dir = img_dir
         self.img_labels = (
             pd.read_csv(os.path.join(self.img_dir, "label.csv"))
             .sample(frac=1)
             .reset_index(drop=True)
         )
-        self.label__name = label__name
+        self.label_name = label_name
         self.transform = transform
         self.target_transform = target_transform
 
