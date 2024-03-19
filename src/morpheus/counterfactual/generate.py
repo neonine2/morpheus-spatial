@@ -1,12 +1,73 @@
 import os
 import numpy as np
 import torch
+
+import multiprocessing
+from functools import partial
+
+from ..datasets import SpatialDataset
 from .cf import Counterfactual
 
 EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 
+def get_counterfactual(
+    self,
+    images: list,
+    model,
+    channel_to_perturb: list,
+    optimization_params: dict,
+    save_dir: str = None,
+    parallel: bool = False,
+    num_workers: bool = None,
+):
+    """
+    Generate counterfactuals for the dataset.
 
-def generate_cf(
+    Args:
+        cf_params (dict): Dictionary containing the parameters for the counterfactual generation.
+        parallel (bool): Whether to generate counterfactuals in parallel.
+        num_workers (int): Number of workers to use for parallel processing.
+    """
+
+    num_images = len(images)
+
+    # Create save directory
+    if save_dir is None:
+        save_dir = os.path.join(self.save_dir, "cf")
+
+    if parallel:
+        # Create a multiprocessing pool with the specified number of workers
+        pool = multiprocessing.Pool(processes=num_workers)
+
+        # Create a partial function with the generate_one_cf parameters
+        process_image_partial = partial(
+            generate_one_cf, optimization_params=optimization_params
+        )
+
+        # Apply the process_image function to each image in parallel
+        pool.starmap(
+            process_image_partial,
+            [(images[i], self.metadata["labels"][i]) for i in range(num_images)],
+        )
+
+        # Close the multiprocessing pool
+        pool.close()
+        pool.join()
+    else:
+        # Process each image sequentially
+        for i in range(num_images):
+            img, patch_id = SpatialDataset.load_single_image(images[i])
+            label = self.metadata[self.label_name].iloc[patch_id]
+            generate_one_cf(
+                original_patch=img,
+                original_label=label,
+                model=model,
+                channel_to_perturb=channel_to_perturb,
+                optimization_params=optimization_params,
+            )
+
+
+def generate_one_cf(
     original_patch: np.ndarray,
     original_label: np.ndarray,
     model: torch.nn.Module,

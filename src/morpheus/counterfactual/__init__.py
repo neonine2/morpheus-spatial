@@ -1,8 +1,8 @@
-from .generate import generate_cf
+from .generate import generate_one_cf
 from .cf import Counterfactual
 
 __all__ = [
     "Counterfactual",
     "process_data_hdf5",
-    "generate_cf",
+    "generate_one_cf",
 ]
