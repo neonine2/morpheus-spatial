@@ -14,6 +14,7 @@ class SpatialDataset:
         self.channel_names = None
         self.metadata = None
         self.data_path = data_path
+        self.root_dir = os.path.dirname(data_path)
         self.load_data()
         self.check_data()
 
@@ -93,6 +94,8 @@ class SpatialDataset:
         save: bool
             Whether to save the data splits to the save directory
         """
+        self.label_name = stratify_by
+
         if tolerance is None:
             tolerance = {"eps": 0.01, "train_lb": 0.5, "n_tol": 100}
         if save_dir is None:
@@ -134,7 +137,6 @@ class SpatialDataset:
         if save:
             print("Saving splits...")
             self.save_splits(patient_split, label_name=stratify_by)
-            self.label_name = stratify_by
             print(f"Data splits saved to {self.save_dir}")
         return patient_split
 
@@ -272,24 +274,24 @@ class SpatialDataset:
         with open(os.path.join(self.save_dir, "normalization_params.json"), "w") as f:
             json.dump(normalization_params, f)
 
-    def load_model(self, model_path: str, model_arch="unet"):
+    def load_model(self, model_path: str, arch="unet"):
         """
         Load the trained model.
 
         Args:
             model_path (str): Path to the model checkpoint.
-            model_arch (str): Model architecture. Either 'mlp' or 'cnn'.
+            arch (str): Model architecture. Either 'mlp' or 'cnn'.
 
         Returns:
             torch.nn.Module: Loaded model.
         """
-        from ..model import PatchClassifier
+        from ..classification import PatchClassifier
 
         model = PatchClassifier.load_from_checkpoint(
             model_path,
-            in_channels=self.n_channel,
+            in_channels=self.n_channels,
             img_size=self.img_size,
-            arch=model_arch,
+            arch=arch,
         )
         model.eval()
         return model
@@ -328,3 +330,6 @@ class SpatialDataset:
             )
         else:
             return image
+
+    def generate_patch_path(self, patch_id, label, split):
+        return os.path.join(self.save_dir, split, f"{label}/patch_{patch_id}.npy")
