@@ -31,7 +31,7 @@ def train(
     train_loader, val_loader, test_loader = make_torch_dataloader(
         dataset.save_dir,
         label_name=label_name,
-        model_arch=model.model_arch,
+        model_arch=model.arch,
         params=dataloader_params,
     )
 
@@ -56,7 +56,7 @@ def train(
     )
 
     # training
-    print(f"Training model with {model.model_arch} architecture")
+    print(f"Training model with {model.arch} architecture")
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
     print(f"model saved to {save_model_dir}")
 

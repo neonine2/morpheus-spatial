@@ -112,11 +112,10 @@ class Counterfactual(Explainer, FitMixin):
         for key in remove:
             params.pop(key)
         self.meta["params"].update(params)
-
         self.predict = predict
         self.trustscore = trustscore
         self.classes = self.predict(torch.zeros(size=shape)).shape[1]
-        print(f"Pytorch model with {self.classes} classes")
+
         is_ae = isinstance(ae_model, torch.nn.Module)
         is_enc = isinstance(enc_model, torch.nn.Module)
 
@@ -177,6 +176,9 @@ class Counterfactual(Explainer, FitMixin):
         else:
             # shape_env may not be equal to shape
             self.shape_enc = self.shape
+
+        # Use the custom function
+        warnings.showwarning = simple_warning
 
     def compute_shrinkage_thresholding(self, feature_range):
         # Conditions for element-wise shrinkage thresholding
@@ -368,9 +370,9 @@ class Counterfactual(Explainer, FitMixin):
                 )
                 self.class_enc[i] = enc_data[idx]
         elif self.use_kdtree:
-            warnings.warn(
-                "No encoder specified. Using k-d trees to represent class prototypes."
-            )
+            # warnings.warn(
+            #     "No encoder specified. Using k-d trees to represent class prototypes."
+            # )
             if not os.path.exists(self.trustscore):
                 print("no trustscore file used, building KDtree...")
                 if trustscore_kwargs is not None:
@@ -385,12 +387,9 @@ class Counterfactual(Explainer, FitMixin):
                 save_object(ts, self.trustscore)
                 print("trustscore file saved")
             else:
-                print("trustscore file already saved, loading KDtree...")
-                print(self.trustscore)
                 ts = load_object(self.trustscore)
                 self.kdtrees = ts.kdtrees
                 self.X_by_class = ts.X_kdtree
-                print("trustscore file loaded")
         return self
 
     def score(
@@ -549,13 +548,12 @@ class Counterfactual(Explainer, FitMixin):
                 self.class_proto[c] = self.X_by_class[c][idx_c[0][-1]].reshape(1, -1)
 
         if self.enc_or_kdtree:
-            self.id_proto = min(dist_proto, key=dist_proto.get)  # type: ignore[arg-type]
+            self.id_proto = min(dist_proto, key=dist_proto.get)
             proto_val = self.class_proto[self.id_proto]
             if self.verbose:
                 print("Prototype class: {}".format(self.id_proto))
         else:  # no prototype loss term used
-            proto_val = np.zeros(self.shape_enc)
-        proto_val = torch.tensor(proto_val, dtype=torch.float32)
+            torch.zeros(self.shape_enc, dtype=torch.float32)
 
         # set the lower and upper bounds for the constant 'c' to scale the attack loss term
         # these bounds are updated for each c_step iteration
@@ -865,3 +863,8 @@ def is_single_float_or_int_tensor(x):
             return True
         # Add more conditions if you want to check for other specific types
     return False
+
+
+# Define a custom warning function
+def simple_warning(message, category, filename, lineno, file=None, line=None):
+    print(f"{category.__name__}: {message}")

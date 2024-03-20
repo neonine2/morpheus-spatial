@@ -1,24 +1,32 @@
 import os
+import json
 import numpy as np
 import torch
 
+from tqdm import tqdm
 import multiprocessing
 from functools import partial
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
+from ..configuration import Splits, ColName
 
 EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 
+
 def get_counterfactual(
-    self,
     images: list,
-    model,
+    dataset: SpatialDataset,
+    target_class: int,
+    model: torch.nn.Module,
     channel_to_perturb: list,
     optimization_params: dict,
+    threshold: float = 0.5,
+    trustscore: str = None,
     save_dir: str = None,
     parallel: bool = False,
     num_workers: bool = None,
+    train_data: str = None,
 ):
     """
     Generate counterfactuals for the dataset.
@@ -30,10 +38,20 @@ def get_counterfactual(
     """
 
     num_images = len(images)
+    with open(os.path.join(dataset.save_dir, "normalization_params.json")) as json_file:
+        normalization_params = json.load(json_file)
+        mu = normalization_params["mean"]
+        stdev = normalization_params["stdev"]
+
+    if train_data is None:
+        train_data = os.path.join(dataset.save_dir, Splits.train.value)
+
+    if trustscore is None:
+        trustscore = os.path.join(dataset.root_dir, "trustscore.pkl")
 
     # Create save directory
     if save_dir is None:
-        save_dir = os.path.join(self.save_dir, "cf")
+        save_dir = os.path.join(dataset.root_dir, "cf")
 
     if parallel:
         # Create a multiprocessing pool with the specified number of workers
@@ -47,7 +65,7 @@ def get_counterfactual(
         # Apply the process_image function to each image in parallel
         pool.starmap(
             process_image_partial,
-            [(images[i], self.metadata["labels"][i]) for i in range(num_images)],
+            [(images[i], dataset.metadata["labels"][i]) for i in range(num_images)],
         )
 
         # Close the multiprocessing pool
@@ -55,25 +73,44 @@ def get_counterfactual(
         pool.join()
     else:
         # Process each image sequentially
-        for i in range(num_images):
-            img, patch_id = SpatialDataset.load_single_image(images[i])
-            label = self.metadata[self.label_name].iloc[patch_id]
+        for i in tqdm(range(num_images)):
+            img_path = dataset.generate_patch_path(
+                patch_id=images.iloc[i][ColName.patch_id.value],
+                label=images.iloc[i][dataset.label_name],
+                split=Splits.train.value,  # TODO: change this to the correct split
+            )
+            img, patch_id = SpatialDataset.load_single_image(img_path)
+            label = dataset.metadata.iloc[patch_id][dataset.label_name]
             generate_one_cf(
                 original_patch=img,
-                original_label=label,
+                original_class=label,
+                target_class=target_class,
                 model=model,
+                channel=dataset.channel_names,
                 channel_to_perturb=channel_to_perturb,
+                mu=mu,
+                stdev=stdev,
+                trustscore=trustscore,
+                train_data=train_data,
                 optimization_params=optimization_params,
+                save_dir=save_dir,
+                patch_id=patch_id,
+                threshold=threshold,
             )
 
 
 def generate_one_cf(
     original_patch: np.ndarray,
-    original_label: np.ndarray,
+    original_class: np.ndarray,
+    target_class: int,
     model: torch.nn.Module,
+    channel: list,
     channel_to_perturb: list,
-    data_dict: dict,
-    X_train_path: str = None,
+    mu: np.ndarray,
+    stdev: np.ndarray,
+    trustscore: str,
+    verbose: bool = False,
+    train_data: str = None,
     optimization_params: dict = None,
     save_dir: str = None,
     patch_id: int = None,
@@ -84,11 +121,11 @@ def generate_one_cf(
 
     Args:
          original_patch (np.ndarray): Original patch to be explained.
-         original_label (np.ndarray): Original label of the patch.
+         original_class (np.ndarray): Original label of the patch.
          model (torch.nn.Module): Model to be explained.
          channel_to_perturb (list): List of channels to perturb.
-         data_dict (dict): Dictionary containing the mean and standard deviation of each channel.
-         X_train_path (str, optional): Path to the training data. Defaults to None.
+         normalization_params (dict): Dictionary containing the mean and standard deviation of each channel.
+         train_data (str, optional): Path to the training data. Defaults to None.
          optimization_params (dict, optional): Dictionary containing the parameters for the optimization. Defaults to {}.
          save_dir (str, optional): Directory where output will be saved. Defaults to None.
          patch_id (int, optional): Patch ID. Defaults to None.
@@ -98,28 +135,26 @@ def generate_one_cf(
          None
     """
     # Obtain data features
-    channel, sigma, mu = (
-        np.array(data_dict["channel"]),
-        torch.from_numpy(data_dict["stdev"]).float(),
-        torch.from_numpy(data_dict["mean"]).float(),
+    stdev, mu = (
+        torch.tensor(stdev).float(),
+        torch.tensor(mu).float(),
     )
     H, _, C = original_patch.shape
-    original_patch = (torch.from_numpy(original_patch).float() - mu) / sigma
-    original_label = torch.from_numpy(original_label).long()
+    original_patch = (torch.from_numpy(original_patch).float() - mu) / stdev
+    original_class = torch.tensor([original_class], dtype=torch.int64)
     X_mean = torch.mean(original_patch, dim=(0, 1))
 
     if model.arch == "mlp":
         original_patch = X_mean
 
     # Adding init layer to model
-    unnormed_mean = X_mean * sigma + mu
+    unnormed_mean = X_mean * stdev + mu
     if model.arch == "mlp":
         altered_model = lambda x: torch.nn.functional.softmax(model(x), dim=1)
         input_transform = lambda x: x
     else:
-        print("Modifying model")
-        unnormed_patch = original_patch[None, :] * sigma + mu
-        init_fun = lambda y: alter_image(y, unnormed_patch, mu, sigma, unnormed_mean)
+        unnormed_patch = original_patch[None, :] * stdev + mu
+        init_fun = lambda y: alter_image(y, unnormed_patch, mu, stdev, unnormed_mean)
         altered_model, input_transform = add_init_layer(init_fun, model)
 
     # Set range of each channel to perturb
@@ -127,7 +162,7 @@ def generate_one_cf(
     is_perturbed = np.array(
         [True if name in channel_to_perturb else False for name in channel]
     )
-    feature_range = (torch.maximum(-mu / sigma, torch.ones(C) * -4), torch.ones(C) * 4)
+    feature_range = (torch.maximum(-mu / stdev, torch.ones(C) * -4), torch.ones(C) * 4)
     feature_range[0][~is_perturbed] = X_mean[~is_perturbed] - EPSILON
     feature_range[1][~is_perturbed] = X_mean[~is_perturbed] + EPSILON
 
@@ -135,46 +170,49 @@ def generate_one_cf(
     predict_fn = lambda x: altered_model(x)
 
     # Terminate if model incorrectly classifies patch as the target class
-    target_class = optimization_params.pop("target_class")
-    orig_proba = predict_fn(X_mean[None, :])
-    print(f"Initial probability: {orig_proba}")
+    orig_proba = predict_fn(X_mean[None, :]).detach().cpu().numpy()
+    if verbose:
+        print(f"Initial probability: {orig_proba}")
     pred = orig_proba[0, 1] > threshold
     if pred == target_class:
         print("Instance already classified as target class, no counterfactual needed")
         return
 
     # define counterfactual object
-    print("defining counterfactual object")
     shape = (1,) + original_patch.shape
     cf = Counterfactual(
         predict_fn,
         input_transform,
         shape,
         feature_range=feature_range,
+        trustscore=trustscore,
+        verbose=verbose,
         **optimization_params,
     )
 
-    print("Building kdtree")
-    if not os.path.exists(optimization_params["trustscore"]):
-        if X_train_path is None:
+    # build kdtree
+    if not os.path.exists(trustscore):
+        # print("Building kdtree")
+        if train_data is None:
             raise ValueError(
-                "X_train_path must be provided if trustscore file does not exist."
+                "train_data must be provided if trustscore file does not exist."
             )
-        X_train = np.load(X_train_path)
-        X_train = (X_train - mu) / sigma
+        train_patch = load_npy_files_to_tensor(train_data)
+        train_patch = (train_patch - mu) / stdev
         if model.arch == "mlp":
-            X_t = torch.from_numpy(np.mean(X_train, axis=(1, 2))).float()
+            X_t = torch.from_numpy(np.mean(train_patch, axis=(1, 2))).float()
         else:
-            X_t = torch.permute(torch.from_numpy(X_train), (0, 3, 1, 2)).float()
+            X_t = torch.permute(train_patch, (0, 3, 1, 2)).float()
         preds = np.argmax(model(X_t).detach().numpy(), axis=1)
-        X_train = torch.mean(X_train, dim=(1, 2))
-        cf.fit(X_train, preds)
+        train_patch = torch.mean(train_patch, dim=(1, 2))
+        cf.fit(train_patch, preds)
+        # print("kdtree built!")
     else:
         cf.fit()
 
-    print("kdtree built!")
+    # generate counterfactual
     explanation = cf.explain(
-        X=X_mean[None, :], Y=original_label[None, :], target_class=[target_class]
+        X=X_mean[None, :], Y=original_class[None, :], target_class=[target_class]
     )
 
     if explanation.cf is not None:
@@ -192,9 +230,9 @@ def generate_one_cf(
         print(f"Counterfactual probability: {cf_prob}")
         print(f"Computed probability: {counterfactual_probabilities}")
         X_perturbed = mean_preserve_dimensions(
-            cf * sigma + mu, preserveAxis=cf.ndim - 1
+            cf * stdev + mu, preserveAxis=cf.ndim - 1
         )
-        original_patch = X_mean * sigma + mu
+        original_patch = X_mean * stdev + mu
         cf_delta = (X_perturbed - original_patch) / original_patch * 100
         print(f"cf delta: {cf_delta}")
         cf_perturbed = dict(zip(channel[is_perturbed], cf_delta[is_perturbed].numpy()))
@@ -212,10 +250,10 @@ def generate_one_cf(
     return explanation
 
 
-def alter_image(y, unnormed_patch, mu, sigma, unnormed_mean):
-    unnormed_y = y * sigma + mu
+def alter_image(y, unnormed_patch, mu, stdev, unnormed_mean):
+    unnormed_y = y * stdev + mu
     new_patch = unnormed_patch * ((unnormed_y / unnormed_mean)[:, None, None, :])
-    return (new_patch - mu) / sigma
+    return (new_patch - mu) / stdev
 
 
 def add_init_layer(init_fun, model):
@@ -258,3 +296,20 @@ def mean_preserve_dimensions(
     dims_to_reduce = [i for i in range(tensor.ndim) if i not in preserveAxis]
     result = tensor.mean(dim=dims_to_reduce)
     return result
+
+
+def load_npy_files_to_tensor(base_dir):
+    arrays = []  # This list will hold all the numpy arrays
+    sub_dirs = ["0", "1"]  # Subdirectories to look into
+
+    for sub_dir in sub_dirs:
+        sub_dir_path = os.path.join(base_dir, sub_dir)
+        for file in os.listdir(sub_dir_path):
+            if file.endswith(".npy"):
+                file_path = os.path.join(sub_dir_path, file)
+                array = np.load(file_path)
+                arrays.append(array)
+
+    # Stack the arrays to form a single n by l by w by n_channels array
+    final_array = torch.from_numpy(np.stack(arrays, axis=0))
+    return final_array
