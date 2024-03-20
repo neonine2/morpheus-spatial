@@ -16,3 +16,9 @@ class Splits(Enum):
     test = "test"
     train = "train"
     validate = "validate"
+
+
+class DefaultFolderName(Enum):
+    split = "split"
+    model = "model"
+    counterfactual = "cf"

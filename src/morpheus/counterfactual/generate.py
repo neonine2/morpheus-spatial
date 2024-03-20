@@ -10,7 +10,7 @@ from functools import partial
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
-from ..configuration import Splits, ColName, CellType
+from ..configuration import Splits, ColName, CellType, DefaultFolderName
 
 EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 
@@ -67,7 +67,9 @@ def get_counterfactual(
 
     # Create save directory
     if save_dir is None:
-        save_dir = os.path.join(dataset.root_dir, "cf")
+        save_dir = os.path.join(
+            dataset.root_dir, DefaultFolderName.counterfactual.value
+        )
 
     if parallel:
         # Create a multiprocessing pool with the specified number of workers

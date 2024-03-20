@@ -6,6 +6,7 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint, TQDMProg
 from ..datasets.spatial_dataset import SpatialDataset
 from ..datasets.torch_dataset import make_torch_dataloader
 from .classifier import PatchClassifier
+from ..configuration import DefaultFolderName
 
 
 def train(
@@ -25,7 +26,9 @@ def train(
     if dataloader_params is None:
         dataloader_params = {"batch_size": 128, "num_workers": 4, "pin_memory": True}
     if save_model_dir is None:
-        save_model_dir = os.path.join(os.path.dirname(dataset.data_path), "models")
+        save_model_dir = os.path.join(
+            os.path.dirname(dataset.data_path), DefaultFolderName.model.value
+        )
 
     # initialize dataloaders
     train_loader, val_loader, test_loader = make_torch_dataloader(

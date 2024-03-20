@@ -5,20 +5,37 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from ..configuration.Types import CellType, ColName, Splits
+from ..configuration.Types import CellType, ColName, Splits, DefaultFolderName
 
 
 class SpatialDataset:
-    def __init__(self, data_path: str):
+    def __init__(
+        self,
+        data_path: str,
+        split_dir: str = None,
+        model_dir: str = None,
+        cf_dir: str = None,
+    ):
         self.data_dim = None
         self.channel_names = None
         self.metadata = None
         self.data_path = data_path
         self.root_dir = os.path.dirname(data_path)
-        self.load_data()
-        self.check_data()
 
-    def check_data(self):
+        try:
+            self.load_raw_data()
+        except Exception as e:
+            print(f"Error loading data: {e}")
+
+        # check that the raw data is consistent
+        self.check_raw_data()
+
+        # set the directories where different outputs are saved
+        self.split_dir = self.set_split_dir(split_dir)
+        self.model_dir = self.set_model_dir(model_dir)
+        self.cf_dir = self.set_counterfactual_dir(cf_dir)
+
+    def check_raw_data(self):
         # check that the data is loaded
         if not hasattr(self, "metadata"):
             raise ValueError("Metadata not loaded")
@@ -36,7 +53,36 @@ class SpatialDataset:
             if col not in self.metadata.columns:
                 raise ValueError(f"Metadata missing column: {col}")
 
-    def load_data(self):
+    def check_processed_patches(self):
+        pass
+
+    def set_split_dir(self, split_dir: str = None):
+        dir = (
+            split_dir
+            if split_dir is not None
+            else os.path.join(self.root_dir, DefaultFolderName.split.value)
+        )
+        return dir if os.path.isdir(dir) else None
+
+    def set_model_dir(self, model_dir: str = None):
+        # check that the model is present
+        dir = (
+            model_dir
+            if model_dir is not None
+            else os.path.join(self.root_dir, DefaultFolderName.model.value)
+        )
+        return dir if os.path.isdir(dir) else None
+
+    def set_counterfactual_dir(self, cf_dir: str = None):
+        # check that the counterfactuals are present
+        dir = (
+            cf_dir
+            if cf_dir is not None
+            else os.path.join(self.root_dir, DefaultFolderName.counterfactual.value)
+        )
+        return dir if os.path.isdir(dir) else None
+
+    def load_raw_data(self):
         try:
             with h5py.File(self.data_path, "r") as f:
                 self.metadata = pd.DataFrame(f["metadata"][:])
@@ -51,6 +97,12 @@ class SpatialDataset:
                 )
         except Exception as e:
             print(f"Error loading data: {e}")
+
+    def get_split_ids(self, split_name: str):
+        split_dir = os.path.join(self.save_dir, split_name)
+        if not os.path.isdir(split_dir):
+            raise ValueError(f"Split {split_name} does not exist")
+        return os.listdir(split_dir)
 
     def generate_data_splits(
         self,
@@ -100,7 +152,7 @@ class SpatialDataset:
             tolerance = {"eps": 0.01, "train_lb": 0.5, "n_tol": 100}
         if save_dir is None:
             self.save_dir = os.path.join(
-                os.path.dirname(self.data_path), "data"
+                os.path.dirname(self.data_path), DefaultFolderName.split.value
             )  # default save directory
         else:
             self.save_dir = save_dir
