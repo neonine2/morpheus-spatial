@@ -60,16 +60,15 @@ def get_counterfactual(
         trustscore = os.path.join(dataset.root_dir, "trustscore.pkl")
 
     if images is None:
-        images = dataset.metadata[
-            (dataset.metadata[CellType.tumor.value] == 1)
-            & (dataset.metadata[dataset.label_name] == 0)
-        ]
+        images = dataset.metadata
 
     # Create save directory
     if save_dir is None:
         save_dir = os.path.join(
             dataset.root_dir, DefaultFolderName.counterfactual.value
         )
+    os.makedirs(save_dir, exist_ok=True)
+    dataset.cf_dir = save_dir
 
     if parallel:
         # Create a multiprocessing pool with the specified number of workers
@@ -95,7 +94,7 @@ def get_counterfactual(
             img_path = dataset.generate_patch_path(
                 patch_id=images.iloc[i][ColName.patch_id.value],
                 label=images.iloc[i][dataset.label_name],
-                split=Splits.train.value,  # TODO: change this to the correct split
+                split=images.iloc[i][ColName.splits.value],
             )
             img, patch_id = SpatialDataset.load_single_image(img_path)
             label = dataset.metadata.iloc[patch_id][dataset.label_name]
@@ -111,7 +110,7 @@ def get_counterfactual(
                 trustscore=trustscore,
                 train_data=train_data,
                 optimization_params=optimization_params,
-                save_dir=save_dir,
+                save_dir=dataset.cf_dir,
                 patch_id=patch_id,
                 threshold=threshold,
             )

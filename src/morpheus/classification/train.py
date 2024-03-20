@@ -26,9 +26,7 @@ def train(
     if dataloader_params is None:
         dataloader_params = {"batch_size": 128, "num_workers": 4, "pin_memory": True}
     if save_model_dir is None:
-        save_model_dir = os.path.join(
-            os.path.dirname(dataset.data_path), DefaultFolderName.model.value
-        )
+        save_model_dir = os.path.join(dataset.root_dir, DefaultFolderName.model.value)
 
     # initialize dataloaders
     train_loader, val_loader, test_loader = make_torch_dataloader(
@@ -62,6 +60,7 @@ def train(
     print(f"Training model with {model.arch} architecture")
     trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
     print(f"model saved to {save_model_dir}")
+    dataset.model_dir = save_model_dir
 
     # testing
     trainer.test(ckpt_path="best", dataloaders=test_loader)

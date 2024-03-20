@@ -5,7 +5,13 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from ..configuration.Types import CellType, ColName, Splits, DefaultFolderName
+from ..configuration.Types import (
+    CellType,
+    ColName,
+    Splits,
+    DefaultFolderName,
+    DefaultFileName,
+)
 
 
 class SpatialDataset:
@@ -34,6 +40,13 @@ class SpatialDataset:
         self.split_dir = self.set_split_dir(split_dir)
         self.model_dir = self.set_model_dir(model_dir)
         self.cf_dir = self.set_counterfactual_dir(cf_dir)
+
+        # concatenate split name to metadata if splits available
+        if self.split_dir is not None:
+            for split in Splits:
+                self.metadata.loc[
+                    self.get_split_ids(split.value), ColName.splits.value
+                ] = split.value
 
     def check_raw_data(self):
         # check that the data is loaded
@@ -65,7 +78,6 @@ class SpatialDataset:
         return dir if os.path.isdir(dir) else None
 
     def set_model_dir(self, model_dir: str = None):
-        # check that the model is present
         dir = (
             model_dir
             if model_dir is not None
@@ -74,7 +86,6 @@ class SpatialDataset:
         return dir if os.path.isdir(dir) else None
 
     def set_counterfactual_dir(self, cf_dir: str = None):
-        # check that the counterfactuals are present
         dir = (
             cf_dir
             if cf_dir is not None
@@ -99,10 +110,13 @@ class SpatialDataset:
             print(f"Error loading data: {e}")
 
     def get_split_ids(self, split_name: str):
-        split_dir = os.path.join(self.save_dir, split_name)
-        if not os.path.isdir(split_dir):
-            raise ValueError(f"Split {split_name} does not exist")
-        return os.listdir(split_dir)
+        label_path = os.path.join(
+            self.split_dir, split_name, DefaultFileName.label.value
+        )
+        try:
+            return pd.read_csv(label_path)[ColName.patch_id.value].values
+        except Exception as e:
+            print(f"Error loading split {split_name}: {e}")
 
     def generate_data_splits(
         self,
@@ -151,23 +165,21 @@ class SpatialDataset:
         if tolerance is None:
             tolerance = {"eps": 0.01, "train_lb": 0.5, "n_tol": 100}
         if save_dir is None:
-            self.save_dir = os.path.join(
+            self.split_dir = os.path.join(
                 os.path.dirname(self.data_path), DefaultFolderName.split.value
             )  # default save directory
         else:
-            self.save_dir = save_dir
+            self.split_dir = save_dir
 
-        if os.path.isdir(os.path.join(self.save_dir, Splits.train.value)):
-            print(f"Data splits already exist in {self.save_dir}")
+        if os.path.isdir(os.path.join(self.split_dir, Splits.train.value)):
+            print(f"Data splits already exist in {self.split_dir}")
             return
 
         print("Generating data splits...")
         if given_splits is not None:
             patient_split = {
-                val: np.array(given_splits[idx])
-                for idx, val in enumerate(
-                    [Splits.train.value, Splits.validate.value, Splits.test.value]
-                )
+                name.value: np.array(given_splits[idx])
+                for idx, name in enumerate(Splits)
             }
         else:
             patient_split = self.get_patient_splits(
@@ -189,7 +201,7 @@ class SpatialDataset:
         if save:
             print("Saving splits...")
             self.save_splits(patient_split, label_name=stratify_by)
-            print(f"Data splits saved to {self.save_dir}")
+            print(f"Data splits saved to {self.split_dir}")
         return patient_split
 
     @staticmethod
@@ -276,10 +288,10 @@ class SpatialDataset:
         # iterate over splits and save patches
         normalization_params = None
         for split_name in tqdm(
-            [Splits.train.value, Splits.validate.value, Splits.test.value],
+            Splits,
             desc="Saving splits",
         ):
-            index = split_index[split_name]
+            index = split_index[split_name.value]
             _patches = patches[index, ...]
             _labels = self.metadata.iloc[index][label_name].values
             _ids = self.metadata.iloc[index][ColName.patch_id.value].values
@@ -293,20 +305,22 @@ class SpatialDataset:
             ]
 
             # make directories for the split
-            _path = os.path.join(self.save_dir, split_name)
+            _path = os.path.join(self.split_dir, split_name.value)
             if not os.path.isdir(_path):
                 os.makedirs(_path)
                 os.makedirs(os.path.join(_path, "0"))
                 os.makedirs(os.path.join(_path, "1"))
 
             # save metadata
-            metadata_to_save.to_csv(os.path.join(_path, "label.csv"), index=False)
+            metadata_to_save.to_csv(
+                os.path.join(_path, DefaultFileName.label.value), index=False
+            )
 
             # save patches
             n_image = len(_labels)
             for i in tqdm(
                 range(n_image),
-                desc=f"Saving images for {split_name} split",
+                desc=f"Saving images for {split_name.value} split",
                 leave=False,
             ):
                 # sparse_tensor = torch.tensor(_patches[i, ...]).to_sparse()
@@ -316,14 +330,14 @@ class SpatialDataset:
                 # torch.save(sparse_tensor, save_path)
 
             # save normalization parameters
-            if split_name == Splits.train.value:
+            if split_name.value == Splits.train.value:
                 normalization_params = {
                     "mean": np.mean(_patches, axis=(0, 1, 2)).tolist(),
                     "stdev": np.std(_patches, axis=(0, 1, 2)).tolist(),
                 }
 
         # save normalization parameters to json
-        with open(os.path.join(self.save_dir, "normalization_params.json"), "w") as f:
+        with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
             json.dump(normalization_params, f)
 
     def load_model(self, model_path: str, arch="unet"):
@@ -353,10 +367,10 @@ class SpatialDataset:
         Load all images with patch_ids in the list from the dataset.
         """
         # join the label column with the patch_id column to form the image path
-        image_paths = metadata[colname.patch_id.value].apply(
+        image_paths = metadata[ColName.patch_id.value].apply(
             lambda x: os.path.join(
-                self.save_dir,
-                f"{x[self.label_name]}/patch_{x[colname.image_id.value]}.npy",
+                self.split_dir,
+                f"{x[self.label_name]}/patch_{x[ColName.image_id.value]}.npy",
             ),
             axis=1,
         )
@@ -384,4 +398,4 @@ class SpatialDataset:
             return image
 
     def generate_patch_path(self, patch_id, label, split):
-        return os.path.join(self.save_dir, split, f"{label}/patch_{patch_id}.npy")
+        return os.path.join(self.split_dir, split, f"{label}/patch_{patch_id}.npy")

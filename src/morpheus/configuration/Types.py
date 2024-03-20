@@ -5,6 +5,7 @@ class ColName(Enum):
     image_id = "ImageNumber"
     patient_id = "PatientID"
     patch_id = "patch_index"
+    splits = "splits"
 
 
 class CellType(Enum):
@@ -22,3 +23,8 @@ class DefaultFolderName(Enum):
     split = "split"
     model = "model"
     counterfactual = "cf"
+
+
+class DefaultFileName(Enum):
+    label = "label.csv"
+    trustscore = "trustscore.pkl"
