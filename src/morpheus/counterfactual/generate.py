@@ -1,6 +1,7 @@
 import os
 import json
 import numpy as np
+import pandas as pd
 import torch
 
 from tqdm import tqdm
@@ -9,18 +10,18 @@ from functools import partial
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
-from ..configuration import Splits, ColName
+from ..configuration import Splits, ColName, CellType
 
 EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 
 
 def get_counterfactual(
-    images: list,
     dataset: SpatialDataset,
     target_class: int,
     model: torch.nn.Module,
     channel_to_perturb: list,
     optimization_params: dict,
+    images: pd.DataFrame = None,
     threshold: float = 0.5,
     trustscore: str = None,
     save_dir: str = None,
@@ -32,9 +33,18 @@ def get_counterfactual(
     Generate counterfactuals for the dataset.
 
     Args:
-        cf_params (dict): Dictionary containing the parameters for the counterfactual generation.
-        parallel (bool): Whether to generate counterfactuals in parallel.
-        num_workers (int): Number of workers to use for parallel processing.
+        dataset (SpatialDataset): Dataset to generate counterfactuals for.
+        target_class (int): Target class for the counterfactuals.
+        model (torch.nn.Module): Model to generate counterfactuals for.
+        channel_to_perturb (list): List of channels to perturb.
+        optimization_params (dict): Dictionary containing the parameters for the optimization.
+        images (pd.DataFrame, optional): Images to generate counterfactuals for. Defaults to None.
+        threshold (float, optional): Threshold for the prediction probability. Defaults to 0.5.
+        trustscore (str, optional): Path to the trustscore file. Defaults to None.
+        save_dir (str, optional): Directory where output will be saved. Defaults to None.
+        parallel (bool, optional): Whether to run the counterfactual generation in parallel. Defaults to False.
+        num_workers (bool, optional): Number of workers to use for parallel processing. Defaults to None.
+        train_data (str, optional): Path to the training data. Defaults to None.
     """
 
     num_images = len(images)
@@ -48,6 +58,12 @@ def get_counterfactual(
 
     if trustscore is None:
         trustscore = os.path.join(dataset.root_dir, "trustscore.pkl")
+
+    if images is None:
+        images = dataset.metadata[
+            (dataset.metadata[CellType.tumor.value] == 1)
+            & (dataset.metadata[dataset.label_name] == 0)
+        ]
 
     # Create save directory
     if save_dir is None:
