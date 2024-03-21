@@ -11,7 +11,7 @@ import torch.optim as optim
 
 from ..api.defaults import DEFAULT_DATA, DEFAULT_META
 from ..api.interfaces import Explainer, Explanation, FitMixin
-from ..confidence import TrustScore
+
 
 
 class Counterfactual(Explainer, FitMixin):
@@ -338,7 +338,6 @@ class Counterfactual(Explainer, FitMixin):
         self,
         train_data: np.ndarray = np.array([]),
         preds: np.ndarray = np.array([]),
-        trustscore_kwargs: Optional[dict] = None,
     ) -> "Counterfactual":
         """
         Get prototypes for each class using the encoder or k-d trees.
@@ -348,8 +347,6 @@ class Counterfactual(Explainer, FitMixin):
         ----------
         train_data
             Representative sample from the training data.
-        trustscore_kwargs
-            Optional arguments to initialize the trust scores method.
         """
         # get params for storage in meta
         params = locals()
@@ -373,23 +370,9 @@ class Counterfactual(Explainer, FitMixin):
             # warnings.warn(
             #     "No encoder specified. Using k-d trees to represent class prototypes."
             # )
-            if not os.path.exists(self.trustscore):
-                print("no trustscore file used, building KDtree...")
-                if trustscore_kwargs is not None:
-                    ts = TrustScore(**trustscore_kwargs)
-                else:
-                    ts = TrustScore()
-                # if self.is_cat:  # map categorical to numerical data
-                # train_data = ord_to_num(train_data_ord, self.d_abs)
-                ts.fit(train_data, preds, classes=self.classes)  # type: ignore
-                self.kdtrees = ts.kdtrees
-                self.X_by_class = ts.X_kdtree
-                save_object(ts, self.trustscore)
-                print("trustscore file saved")
-            else:
-                ts = load_object(self.trustscore)
-                self.kdtrees = ts.kdtrees
-                self.X_by_class = ts.X_kdtree
+            ts = load_object(self.trustscore)
+            self.kdtrees = ts.kdtrees
+            self.X_by_class = ts.X_kdtree
         return self
 
     def score(
@@ -840,11 +823,6 @@ class Counterfactual(Explainer, FitMixin):
         explanation = Explanation(meta=copy.deepcopy(self.meta), data=data)
 
         return explanation
-
-
-def save_object(obj, filename):
-    with open(filename, "wb") as outp:  # Overwrites any existing file.
-        pickle.dump(obj, outp, -1)
 
 
 def load_object(filename):

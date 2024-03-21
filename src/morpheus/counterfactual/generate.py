@@ -1,16 +1,23 @@
 import os
 import json
+import _pickle as pickle
 import numpy as np
 import pandas as pd
+from typing import Optional
 import torch
 
 from tqdm import tqdm
 import multiprocessing
-from functools import partial
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
-from ..configuration import Splits, ColName, CellType, DefaultFolderName
+from ..confidence import TrustScore
+from ..configuration import (
+    Splits,
+    ColName,
+    DefaultFolderName,
+    DefaultFileName,
+)
 
 EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 
@@ -23,11 +30,13 @@ def get_counterfactual(
     optimization_params: dict,
     images: pd.DataFrame = None,
     threshold: float = 0.5,
-    trustscore: str = None,
+    kdtree_path: str = None,
     save_dir: str = None,
     parallel: bool = False,
     num_workers: bool = None,
     train_data: str = None,
+    verbose: bool = False,
+    trustscore_kwargs: Optional[dict] = None,
 ):
     """
     Generate counterfactuals for the dataset.
@@ -40,25 +49,27 @@ def get_counterfactual(
         optimization_params (dict): Dictionary containing the parameters for the optimization.
         images (pd.DataFrame, optional): Images to generate counterfactuals for. Defaults to None.
         threshold (float, optional): Threshold for the prediction probability. Defaults to 0.5.
-        trustscore (str, optional): Path to the trustscore file. Defaults to None.
+        kdtree_path (str, optional): Path to the kdtree file. Defaults to None.
         save_dir (str, optional): Directory where output will be saved. Defaults to None.
         parallel (bool, optional): Whether to run the counterfactual generation in parallel. Defaults to False.
         num_workers (bool, optional): Number of workers to use for parallel processing. Defaults to None.
         train_data (str, optional): Path to the training data. Defaults to None.
     """
-
     num_images = len(images)
-    with open(os.path.join(dataset.save_dir, "normalization_params.json")) as json_file:
+
+    # Load normalization parameters
+    with open(
+        os.path.join(dataset.split_dir, "normalization_params.json")
+    ) as json_file:
         normalization_params = json.load(json_file)
         mu = normalization_params["mean"]
         stdev = normalization_params["stdev"]
 
+    # Set default paths
     if train_data is None:
-        train_data = os.path.join(dataset.save_dir, Splits.train.value)
-
-    if trustscore is None:
-        trustscore = os.path.join(dataset.root_dir, "trustscore.pkl")
-
+        train_data = os.path.join(dataset.split_dir, Splits.train.value)
+    if kdtree_path is None:
+        kdtree_path = os.path.join(dataset.root_dir, DefaultFileName.kdtree.value)
     if images is None:
         images = dataset.metadata
 
@@ -70,50 +81,47 @@ def get_counterfactual(
     os.makedirs(save_dir, exist_ok=True)
     dataset.cf_dir = save_dir
 
+    # Build kdtree if it does not exist
+    if not os.path.exists(kdtree_path):
+        build_kdtree(kdtree_path, train_data, model, mu, stdev, trustscore_kwargs)
+        print("kdtree saved")
+
+    # Prepare arguments for generate_one_cf function
+    generate_one_cf_args = []
+    for i in range(num_images):
+        img_path = dataset.generate_patch_path(
+            patch_id=images.iloc[i][ColName.patch_id.value],
+            label=images.iloc[i][dataset.label_name],
+            split=images.iloc[i][ColName.splits.value],
+        )
+        img, patch_id = SpatialDataset.load_single_image(img_path)
+        label = dataset.metadata.iloc[patch_id][dataset.label_name]
+        generate_one_cf_args.append(
+            (
+                img,
+                label,
+                target_class,
+                model,
+                dataset.channel_names,
+                channel_to_perturb,
+                mu,
+                stdev,
+                kdtree_path,
+                verbose,
+                optimization_params,
+                save_dir,
+                patch_id,
+                threshold,
+            )
+        )
+
+    # Generate counterfactuals
     if parallel:
-        # Create a multiprocessing pool with the specified number of workers
-        pool = multiprocessing.Pool(processes=num_workers)
-
-        # Create a partial function with the generate_one_cf parameters
-        process_image_partial = partial(
-            generate_one_cf, optimization_params=optimization_params
-        )
-
-        # Apply the process_image function to each image in parallel
-        pool.starmap(
-            process_image_partial,
-            [(images[i], dataset.metadata["labels"][i]) for i in range(num_images)],
-        )
-
-        # Close the multiprocessing pool
-        pool.close()
-        pool.join()
+        with multiprocessing.Pool(processes=num_workers) as pool:
+            pool.starmap(generate_one_cf, generate_one_cf_args)
     else:
-        # Process each image sequentially
-        for i in tqdm(range(num_images)):
-            img_path = dataset.generate_patch_path(
-                patch_id=images.iloc[i][ColName.patch_id.value],
-                label=images.iloc[i][dataset.label_name],
-                split=images.iloc[i][ColName.splits.value],
-            )
-            img, patch_id = SpatialDataset.load_single_image(img_path)
-            label = dataset.metadata.iloc[patch_id][dataset.label_name]
-            generate_one_cf(
-                original_patch=img,
-                original_class=label,
-                target_class=target_class,
-                model=model,
-                channel=dataset.channel_names,
-                channel_to_perturb=channel_to_perturb,
-                mu=mu,
-                stdev=stdev,
-                trustscore=trustscore,
-                train_data=train_data,
-                optimization_params=optimization_params,
-                save_dir=dataset.cf_dir,
-                patch_id=patch_id,
-                threshold=threshold,
-            )
+        for args in tqdm(generate_one_cf_args, total=num_images):
+            generate_one_cf(*args)
 
 
 def generate_one_cf(
@@ -125,9 +133,8 @@ def generate_one_cf(
     channel_to_perturb: list,
     mu: np.ndarray,
     stdev: np.ndarray,
-    trustscore: str,
+    kdtree_path: str,
     verbose: bool = False,
-    train_data: str = None,
     optimization_params: dict = None,
     save_dir: str = None,
     patch_id: int = None,
@@ -175,7 +182,6 @@ def generate_one_cf(
         altered_model, input_transform = add_init_layer(init_fun, model)
 
     # Set range of each channel to perturb
-    channel_to_perturb = [name for name in channel if name in channel_to_perturb]
     is_perturbed = np.array(
         [True if name in channel_to_perturb else False for name in channel]
     )
@@ -202,30 +208,11 @@ def generate_one_cf(
         input_transform,
         shape,
         feature_range=feature_range,
-        trustscore=trustscore,
+        trustscore=kdtree_path,
         verbose=verbose,
         **optimization_params,
     )
-
-    # build kdtree
-    if not os.path.exists(trustscore):
-        # print("Building kdtree")
-        if train_data is None:
-            raise ValueError(
-                "train_data must be provided if trustscore file does not exist."
-            )
-        train_patch = load_npy_files_to_tensor(train_data)
-        train_patch = (train_patch - mu) / stdev
-        if model.arch == "mlp":
-            X_t = torch.from_numpy(np.mean(train_patch, axis=(1, 2))).float()
-        else:
-            X_t = torch.permute(train_patch, (0, 3, 1, 2)).float()
-        preds = np.argmax(model(X_t).detach().numpy(), axis=1)
-        train_patch = torch.mean(train_patch, dim=(1, 2))
-        cf.fit(train_patch, preds)
-        # print("kdtree built!")
-    else:
-        cf.fit()
+    cf.fit()
 
     # generate counterfactual
     explanation = cf.explain(
@@ -262,7 +249,7 @@ def generate_one_cf(
                 saved_file,
                 explanation=explanation,
                 cf_perturbed=cf_perturbed,
-                channel_to_perturb=channel_to_perturb,
+                channel_to_perturb=channel[is_perturbed],
             )
     return explanation
 
@@ -330,3 +317,33 @@ def load_npy_files_to_tensor(base_dir):
     # Stack the arrays to form a single n by l by w by n_channels array
     final_array = torch.from_numpy(np.stack(arrays, axis=0))
     return final_array
+
+
+def build_kdtree(
+    kdtree_path,
+    train_data: str,
+    model: torch.nn.Module,
+    mu: np.ndarray,
+    stdev: np.ndarray,
+    trustscore_kwargs: Optional[dict] = None,
+):
+    train_patch = load_npy_files_to_tensor(train_data)
+    train_patch = (train_patch - mu) / stdev
+    if model.arch == "mlp":
+        X_t = torch.from_numpy(np.mean(train_patch, axis=(1, 2))).float()
+    else:
+        X_t = torch.permute(train_patch, (0, 3, 1, 2)).float()
+    preds = np.argmax(model(X_t).detach().numpy(), axis=1)
+    train_patch = torch.mean(train_patch, dim=(1, 2))
+    print("building KDtree...")
+    if trustscore_kwargs is not None:
+        ts = TrustScore(**trustscore_kwargs)
+    else:
+        ts = TrustScore()
+    ts.fit(train_data, preds, classes=2)
+    save_object(ts, kdtree_path)
+
+
+def save_object(obj, filename):
+    with open(filename, "wb") as outp:  # Overwrites any existing file.
+        pickle.dump(obj, outp, -1)

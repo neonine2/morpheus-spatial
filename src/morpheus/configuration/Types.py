@@ -27,4 +27,4 @@ class DefaultFolderName(Enum):
 
 class DefaultFileName(Enum):
     label = "label.csv"
-    trustscore = "trustscore.pkl"
+    kdtree = "kdtree.pkl"
