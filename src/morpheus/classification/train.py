@@ -30,7 +30,7 @@ def train(
 
     # initialize dataloaders
     train_loader, val_loader, test_loader = make_torch_dataloader(
-        dataset.save_dir,
+        dataset.split_dir,
         label_name=label_name,
         model_arch=model.arch,
         params=dataloader_params,

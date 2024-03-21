@@ -7,7 +7,10 @@ from typing import Optional
 import torch
 
 from tqdm import tqdm
-import multiprocessing
+from multiprocessing import Pool
+
+# import multiprocessing
+
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
@@ -32,8 +35,7 @@ def get_counterfactual(
     threshold: float = 0.5,
     kdtree_path: str = None,
     save_dir: str = None,
-    parallel: bool = False,
-    num_workers: bool = None,
+    num_workers: int = 1,
     train_data: str = None,
     verbose: bool = False,
     trustscore_kwargs: Optional[dict] = None,
@@ -51,7 +53,6 @@ def get_counterfactual(
         threshold (float, optional): Threshold for the prediction probability. Defaults to 0.5.
         kdtree_path (str, optional): Path to the kdtree file. Defaults to None.
         save_dir (str, optional): Directory where output will be saved. Defaults to None.
-        parallel (bool, optional): Whether to run the counterfactual generation in parallel. Defaults to False.
         num_workers (bool, optional): Number of workers to use for parallel processing. Defaults to None.
         train_data (str, optional): Path to the training data. Defaults to None.
     """
@@ -116,9 +117,17 @@ def get_counterfactual(
         )
 
     # Generate counterfactuals
+    parallel = True if num_workers > 1 else False
     if parallel:
-        with multiprocessing.Pool(processes=num_workers) as pool:
-            pool.starmap(generate_one_cf, generate_one_cf_args)
+        from dask import delayed
+        import dask.multiprocessing
+
+        @delayed
+        def generate_one_cf_delayed(args):
+            return generate_one_cf(*args)
+
+        dask_tasks = [generate_one_cf_delayed(args) for args in generate_one_cf_args]
+        _ = dask.compute(*dask_tasks, scheduler="processes", num_workers=num_workers)
     else:
         for args in tqdm(generate_one_cf_args, total=num_images):
             generate_one_cf(*args)

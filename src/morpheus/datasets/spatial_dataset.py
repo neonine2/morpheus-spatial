@@ -340,6 +340,7 @@ class SpatialDataset:
         with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
             json.dump(normalization_params, f)
 
+    @staticmethod
     def load_model(self, model_path: str, arch="unet"):
         """
         Load the trained model.
