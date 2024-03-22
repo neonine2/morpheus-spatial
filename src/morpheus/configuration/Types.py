@@ -4,6 +4,9 @@ from enum import Enum
 class ColName(Enum):
     image_id = "ImageNumber"
     patient_id = "PatientID"
+    cell_type = "CellType"
+    cell_x = "Location_Center_X"
+    cell_y = "Location_Center_Y"
     patch_id = "patch_index"
     splits = "splits"
 
