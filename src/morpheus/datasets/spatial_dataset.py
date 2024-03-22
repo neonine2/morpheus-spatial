@@ -1,10 +1,17 @@
 import json
 import os
+import warnings
 
 import h5py
 import numpy as np
 import pandas as pd
 
+from ..utils.patchify import (
+    image_to_patch,
+    patch_to_pixel,
+    get_patch_coord,
+    patch_to_matrix,
+)
 from ..configuration.Types import (
     CellType,
     ColName,
@@ -17,7 +24,8 @@ from ..configuration.Types import (
 class SpatialDataset:
     def __init__(
         self,
-        data_path: str,
+        input_path: str,
+        data_path: str = None,
         split_dir: str = None,
         model_dir: str = None,
         cf_dir: str = None,
@@ -25,30 +33,107 @@ class SpatialDataset:
         self.data_dim = None
         self.channel_names = None
         self.metadata = None
-        self.data_path = data_path
-        self.root_dir = os.path.dirname(data_path)
+        self.input_path = input_path
+        self.root_dir = os.path.dirname(input_path)
 
-        try:
-            self.load_raw_data()
-        except Exception as e:
-            print(f"Error loading data: {e}")
-
-        # check that the raw data is consistent
-        self.check_raw_data()
+        data = self.load_input_csv()
+        self.check_input_csv(data)
 
         # set the directories where different outputs are saved
+        self.data_path = data_path
         self.split_dir = self.set_split_dir(split_dir)
         self.model_dir = self.set_model_dir(model_dir)
         self.cf_dir = self.set_counterfactual_dir(cf_dir)
 
         # concatenate split name to metadata if splits available
-        if self.split_dir is not None:
+        if self.split_dir is not None and self.data_path is not None:
             for split in Splits:
                 self.metadata.loc[
                     self.get_split_ids(split.value), ColName.splits.value
                 ] = split.value
 
-    def check_raw_data(self):
+    def check_input_csv(self, input_csv: pd.DataFrame):
+        # check the input CSV contains the required columns
+        required_cols = [
+            ColName.patient_id.value,
+            ColName.image_id.value,
+            ColName.cell_type.value,
+            ColName.cell_x.value,
+            ColName.cell_y.value,
+        ]
+        for col in required_cols:
+            if col not in input_csv.columns:
+                warnings.warn("input csv does not contain required column: {col}")
+
+        # check that the input CSV contains columns in addition to the required columns
+        if len(input_csv.columns) == len(required_cols):
+            raise ValueError("Input CSV does not contain any channel columns")
+
+        # check that the input CSV is not empty
+        if input_csv.empty:
+            raise ValueError("Input CSV is empty")
+
+        # set the additional columns as channel names
+        self.channel_names = [
+            col for col in input_csv.columns if col not in required_cols
+        ]
+        return
+
+    def load_input_csv(self):
+        try:
+            data = pd.read_csv(self.input_path)
+        except Exception as e:
+            print(f"Error loading input CSV: {e}")
+        return data
+
+    def generate_masked_patch(
+        self, cell_to_mask: str, patch_sz: int = 50, pixel_sz: int = 1
+    ):
+        data = self.load_input_csv(self.input_path)
+        width = int(patch_sz / pixel_sz)
+        height = width
+        df = image_to_patch(data, (patch_sz, patch_sz))
+        df2 = patch_to_pixel(
+            df, width=width, height=height, pixel_dim=(pixel_sz, pixel_sz)
+        )
+        df2[["x0", "y0"]] = df[["x0", "y0"]]
+
+        # mask all signals from the cell type of interest
+        df2.loc[df2[ColName.cell_type.value] == cell_to_mask, self.channel_names] = 0
+
+        # extract coordinate of each patch
+        position = get_patch_coord(df2, patch_sz)
+
+        intensity, label, genes_to_keep, groupedimage = patch_to_matrix(
+            df2,
+            width=width,
+            height=height,
+            typeName=ColName.cell_type.value,
+            genelist=self.column_names,
+            celltype=["Tcytotoxic", "Tumor"],
+            channel_to_remove=[],
+        )
+        intensity = np.swapaxes(np.swapaxes(intensity, 1, 2), 2, 3)
+        label = label.astype(int)
+
+        # Get back original image number label
+        original_ImageNumber = np.array(
+            groupedimage[["ImageNumber", "original_ImageNumber"]].drop_duplicates()[
+                "original_ImageNumber"
+            ]
+        )
+        orig_imagenum = groupedimage[
+            ["ImageNumber", "original_ImageNumber"]
+        ].drop_duplicates()
+        orig_imagenum = orig_imagenum.set_index("ImageNumber")
+        label = pd.concat([orig_imagenum, label], axis=1).reset_index()
+        label["ImageNumber"] = label["original_ImageNumber"].astype(int)
+        label = label.drop(columns=["original_ImageNumber"])
+
+        with open(f"{save_dir}/{data_dir}/patched.dat", "wb") as f:
+            pickle.dump((intensity, label, genes_to_keep, position), f, protocol=4)
+
+    def check_processed_patch(self):
         # check that the data is loaded
         if not hasattr(self, "metadata"):
             raise ValueError("Metadata not loaded")
@@ -65,9 +150,6 @@ class SpatialDataset:
         for col in [ColName.patient_id.value, ColName.patch_id.value]:
             if col not in self.metadata.columns:
                 raise ValueError(f"Metadata missing column: {col}")
-
-    def check_processed_patches(self):
-        pass
 
     def set_split_dir(self, split_dir: str = None):
         dir = (
