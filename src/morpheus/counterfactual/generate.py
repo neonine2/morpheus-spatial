@@ -263,6 +263,52 @@ def generate_one_cf(
     return explanation
 
 
+def build_kdtree(
+    kdtree_path,
+    train_data: str,
+    model: torch.nn.Module,
+    mu: list,
+    stdev: list,
+    trustscore_kwargs: Optional[dict] = None,
+):
+    train_patch = load_npy_files_to_array(train_data)
+    train_patch = torch.from_numpy(
+        (train_patch - np.array(mu)) / np.array(stdev)
+    ).float()
+    if model.arch == "mlp":
+        X_t = torch.mean(train_patch, (1, 2))
+    else:
+        X_t = torch.permute(train_patch, (0, 3, 1, 2))
+
+    model_out = model(X_t).detach().numpy()
+    preds = np.argmax(model_out, axis=1)
+
+    if trustscore_kwargs is not None:
+        ts = TrustScore(**trustscore_kwargs)
+    else:
+        ts = TrustScore()
+    train_patch = torch.mean(train_patch, (1, 2))
+    ts.fit(train_patch, preds, classes=2)
+    save_object(ts, kdtree_path)
+
+
+def load_npy_files_to_array(base_dir):
+    arrays = []  # This list will hold all the numpy arrays
+    sub_dirs = ["0", "1"]  # Subdirectories to look into
+
+    for sub_dir in sub_dirs:
+        sub_dir_path = os.path.join(base_dir, sub_dir)
+        for file in os.listdir(sub_dir_path):
+            if file.endswith(".npy"):
+                file_path = os.path.join(sub_dir_path, file)
+                array = np.load(file_path)
+                arrays.append(array)
+
+    # Stack the arrays to form a single n by l by w by n_channels array
+    final_array = np.stack(arrays, axis=0)
+    return final_array
+
+
 def alter_image(y, unnormed_patch, mu, stdev, unnormed_mean):
     unnormed_y = y * stdev + mu
     new_patch = unnormed_patch * ((unnormed_y / unnormed_mean)[:, None, None, :])
@@ -309,48 +355,6 @@ def mean_preserve_dimensions(
     dims_to_reduce = [i for i in range(tensor.ndim) if i not in preserveAxis]
     result = tensor.mean(dim=dims_to_reduce)
     return result
-
-
-def load_npy_files_to_tensor(base_dir):
-    arrays = []  # This list will hold all the numpy arrays
-    sub_dirs = ["0", "1"]  # Subdirectories to look into
-
-    for sub_dir in sub_dirs:
-        sub_dir_path = os.path.join(base_dir, sub_dir)
-        for file in os.listdir(sub_dir_path):
-            if file.endswith(".npy"):
-                file_path = os.path.join(sub_dir_path, file)
-                array = np.load(file_path)
-                arrays.append(array)
-
-    # Stack the arrays to form a single n by l by w by n_channels array
-    final_array = torch.from_numpy(np.stack(arrays, axis=0))
-    return final_array
-
-
-def build_kdtree(
-    kdtree_path,
-    train_data: str,
-    model: torch.nn.Module,
-    mu: np.ndarray,
-    stdev: np.ndarray,
-    trustscore_kwargs: Optional[dict] = None,
-):
-    train_patch = load_npy_files_to_tensor(train_data)
-    train_patch = (train_patch - mu) / stdev
-    if model.arch == "mlp":
-        X_t = torch.from_numpy(np.mean(train_patch, axis=(1, 2))).float()
-    else:
-        X_t = torch.permute(train_patch, (0, 3, 1, 2)).float()
-    preds = np.argmax(model(X_t).detach().numpy(), axis=1)
-    train_patch = torch.mean(train_patch, dim=(1, 2))
-    print("building KDtree...")
-    if trustscore_kwargs is not None:
-        ts = TrustScore(**trustscore_kwargs)
-    else:
-        ts = TrustScore()
-    ts.fit(train_data, preds, classes=2)
-    save_object(ts, kdtree_path)
 
 
 def save_object(obj, filename):

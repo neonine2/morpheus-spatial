@@ -29,3 +29,6 @@ Run the following in the command line
 ```bash
 pip install morpheus-spatial
 ```
+
+### Tutorial
+See `example_notebook.ipynb` for a complete workflow on using Morpheus to generate therapeutic strategies.

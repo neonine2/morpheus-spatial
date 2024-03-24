@@ -324,10 +324,7 @@ class SpatialDataset:
             )
 
         if patient_split is None:
-            print(
-                "Could not satisfy data split constraints, try again or adjust constraints"
-            )
-            return
+            raise ValueError("Could not satisfy data split constraints, try again or adjust constraints")
 
         if save:
             print("Saving splits...")
@@ -508,4 +505,5 @@ class SpatialDataset:
             return image
 
     def generate_patch_path(self, patch_id, label, split):
+        label = int(label)
         return os.path.join(self.split_dir, split, f"{label}/patch_{patch_id}.npy")
