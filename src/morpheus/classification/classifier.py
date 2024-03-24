@@ -105,7 +105,7 @@ class PatchClassifier(light.LightningModule):
         recall = tf_classifier.binary_recall(preds, target)
         metric_dict = {
             mode + "_bce": bce,
-            mode + "_precisio1n": precision,
+            mode + "_precision": precision,
             mode + "_recall": recall,
             mode + "_bmc": bmc,
             mode + "_auroc": auroc,

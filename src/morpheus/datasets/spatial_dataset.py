@@ -6,14 +6,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-from ..utils.patchify import (
-    image_to_patch,
-    patch_to_pixel,
-    get_patch_coord,
-    patch_to_matrix,
-)
+from ..utils.patchify import generate_patches_optimized
 from ..configuration.Types import (
-    CellType,
     ColName,
     Splits,
     DefaultFolderName,
@@ -25,34 +19,44 @@ class SpatialDataset:
     def __init__(
         self,
         input_path: str,
-        data_path: str = None,
+        channel_names: list,
+        patch_path: str = None,
         split_dir: str = None,
         model_dir: str = None,
         cf_dir: str = None,
     ):
         self.data_dim = None
-        self.channel_names = None
         self.metadata = None
         self.input_path = input_path
         self.root_dir = os.path.dirname(input_path)
 
+        if len(channel_names) == 0:
+            raise ValueError("Channel names must be provided")
+
         data = self.load_input_csv()
-        self.check_input_csv(data)
+        self.check_input_csv(data, channel_names)  # also sets self.channel_names
 
         # set the directories where different outputs are saved
-        self.data_path = data_path
+        self.patch_path = self.set_patch_path(patch_path)
         self.split_dir = self.set_split_dir(split_dir)
         self.model_dir = self.set_model_dir(model_dir)
         self.cf_dir = self.set_counterfactual_dir(cf_dir)
 
-        # concatenate split name to metadata if splits available
-        if self.split_dir is not None and self.data_path is not None:
-            for split in Splits:
-                self.metadata.loc[
-                    self.get_split_ids(split.value), ColName.splits.value
-                ] = split.value
+        if self.patch_path is not None:
+            self.load_patch_data()
+            self.check_loaded_patch()
 
-    def check_input_csv(self, input_csv: pd.DataFrame):
+        # concatenate split name to metadata if splits available
+        if self.split_dir is not None and self.patch_path is not None:
+            self.get_split_info()
+
+    def get_split_info(self):
+        for split in Splits:
+            self.metadata.loc[self.get_split_ids(split.value), ColName.splits.value] = (
+                split.value
+            )
+
+    def check_input_csv(self, input_csv: pd.DataFrame, channel_names: list):
         # check the input CSV contains the required columns
         required_cols = [
             ColName.patient_id.value,
@@ -60,23 +64,17 @@ class SpatialDataset:
             ColName.cell_type.value,
             ColName.cell_x.value,
             ColName.cell_y.value,
-        ]
+        ] + channel_names
         for col in required_cols:
             if col not in input_csv.columns:
                 warnings.warn("input csv does not contain required column: {col}")
 
-        # check that the input CSV contains columns in addition to the required columns
-        if len(input_csv.columns) == len(required_cols):
-            raise ValueError("Input CSV does not contain any channel columns")
+        # reorder the channel names to match the order in the input CSV
+        self.channel_names = [col for col in input_csv.columns if col in channel_names]
 
         # check that the input CSV is not empty
         if input_csv.empty:
             raise ValueError("Input CSV is empty")
-
-        # set the additional columns as channel names
-        self.channel_names = [
-            col for col in input_csv.columns if col not in required_cols
-        ]
         return
 
     def load_input_csv(self):
@@ -87,69 +85,99 @@ class SpatialDataset:
         return data
 
     def generate_masked_patch(
-        self, cell_to_mask: str, patch_sz: int = 50, pixel_sz: int = 1
+        self,
+        cell_to_mask: list = [],
+        patch_size: int = 16,
+        pixel_size: int = 3,
+        cell_types: list = None,
+        save: bool = True,
+        save_path: str = None,
     ):
-        data = self.load_input_csv(self.input_path)
-        width = int(patch_sz / pixel_sz)
-        height = width
-        df = image_to_patch(data, (patch_sz, patch_sz))
-        df2 = patch_to_pixel(
-            df, width=width, height=height, pixel_dim=(pixel_sz, pixel_sz)
+        """
+        Generate masked patches from the input data.
+
+        Args:
+            cell_to_mask (str): The cell type to mask.
+            patch_size (int): The size of the patch in pixels.
+            pixel_size (int): The pixel size in microns.
+            cell_types (list): The cell types to include in the metadata.
+            save (bool): Whether to save the patches.
+            save_path (str): The path to save the patches.
+
+        Returns:
+
+        """
+        # print out details about the patches
+        print(f"Generating patches of size {patch_size}x{patch_size} pixels")
+        print(f"Pixel size: {pixel_size}x{pixel_size} microns")
+        print(f"Cell types recorded: {cell_types}")
+        print(f"Cell types masked: {cell_to_mask}")
+
+        # load the input data
+        df = self.load_input_csv()
+
+        # generate the patches
+        patches_array, metadata_df = generate_patches_optimized(
+            df, patch_size, pixel_size, cell_types, self.channel_names, cell_to_mask
         )
-        df2[["x0", "y0"]] = df[["x0", "y0"]]
-
-        # mask all signals from the cell type of interest
-        df2.loc[df2[ColName.cell_type.value] == cell_to_mask, self.channel_names] = 0
-
-        # extract coordinate of each patch
-        position = get_patch_coord(df2, patch_sz)
-
-        intensity, label, genes_to_keep, groupedimage = patch_to_matrix(
-            df2,
-            width=width,
-            height=height,
-            typeName=ColName.cell_type.value,
-            genelist=self.column_names,
-            celltype=["Tcytotoxic", "Tumor"],
-            channel_to_remove=[],
+        metadata_df = metadata_df.reset_index().rename(
+            columns={"index": ColName.patch_id.value}
         )
-        intensity = np.swapaxes(np.swapaxes(intensity, 1, 2), 2, 3)
-        label = label.astype(int)
+        n, h, w, c = patches_array.shape
 
-        # Get back original image number label
-        original_ImageNumber = np.array(
-            groupedimage[["ImageNumber", "original_ImageNumber"]].drop_duplicates()[
-                "original_ImageNumber"
-            ]
-        )
-        orig_imagenum = groupedimage[
-            ["ImageNumber", "original_ImageNumber"]
-        ].drop_duplicates()
-        orig_imagenum = orig_imagenum.set_index("ImageNumber")
-        label = pd.concat([orig_imagenum, label], axis=1).reset_index()
-        label["ImageNumber"] = label["original_ImageNumber"].astype(int)
-        label = label.drop(columns=["original_ImageNumber"])
-
-        with open(f"{save_dir}/{data_dir}/patched.dat", "wb") as f:
-            pickle.dump((intensity, label, genes_to_keep, position), f, protocol=4)
-
-    def check_processed_patch(self):
-        # check that the data is loaded
-        if not hasattr(self, "metadata"):
-            raise ValueError("Metadata not loaded")
-        if not hasattr(self, "channel_names"):
-            raise ValueError("Channel names not loaded")
-
-        # check that the data is consistent
-        if len(self.metadata) != self.metadata[ColName.patch_id.value].nunique():
-            raise ValueError("Metadata contains duplicate patch IDs")
-        if len(self.channel_names) != self.n_channels:
+        # check number of channel names matches the number of channels in the data
+        if c != len(self.channel_names):
             raise ValueError("Number of channel names do not match data dimensions")
 
-        # check key metadata columns are present
-        for col in [ColName.patient_id.value, ColName.patch_id.value]:
-            if col not in self.metadata.columns:
-                raise ValueError(f"Metadata missing column: {col}")
+        # check the patch dimensions match the expected dimensions
+        if h != patch_size or w != patch_size:
+            raise ValueError("Patch dimensions do not match the expected dimensions")
+
+        # check the number of patches generated matches the number of rows in the metadata
+        if n != len(metadata_df):
+            raise ValueError("Number of patches generated does not match metadata")
+
+        if save:
+            # check the save_path is not already present
+            self.patch_path = (
+                save_path
+                if save_path is not None
+                else os.path.join(self.root_dir, DefaultFileName.patch.value)
+            )
+            if os.path.isfile(self.patch_path):
+                print(f"File {self.patch_path} already exists, not saving patches")
+            else:
+                with h5py.File(self.patch_path, "w") as f:
+                    # Create a dataset to store the images
+                    f.create_dataset(
+                        "images",
+                        data=patches_array,
+                        compression="gzip",
+                        chunks=(min(n, 100), h, w, c),
+                        dtype=patches_array.dtype,
+                    )
+
+                    # Create a dataset to store the metadata
+                    metadata_numpy = metadata_df.to_records(index=False)
+                    f.create_dataset(
+                        "metadata", data=metadata_numpy, dtype=metadata_numpy.dtype
+                    )
+
+                    # Create a dataset to store the channel names
+                    f.create_dataset("channel_names", data=self.channel_names)
+                print(f"Patches saved to {self.patch_path}")
+
+            self.load_patch_data()
+            self.check_loaded_patch()
+        return
+
+    def set_patch_path(self, patch_path: str = None):
+        path = (
+            patch_path
+            if patch_path is not None
+            else os.path.join(self.root_dir, DefaultFileName.patch.value)
+        )
+        return path if os.path.isfile(path) else None
 
     def set_split_dir(self, split_dir: str = None):
         dir = (
@@ -175,9 +203,27 @@ class SpatialDataset:
         )
         return dir if os.path.isdir(dir) else None
 
-    def load_raw_data(self):
+    def check_loaded_patch(self):
+        # check that the data is loaded
+        if not hasattr(self, "metadata"):
+            raise ValueError("Metadata not loaded")
+        if not hasattr(self, "channel_names"):
+            raise ValueError("Channel names not loaded")
+
+        # check that the data is consistent
+        if len(self.metadata) != self.metadata[ColName.patch_id.value].nunique():
+            raise ValueError("Metadata contains duplicate patch IDs")
+        if len(self.channel_names) != self.n_channels:
+            raise ValueError("Number of channel names do not match data dimensions")
+
+        # check key metadata columns are present
+        for col in [ColName.patient_id.value, ColName.patch_id.value]:
+            if col not in self.metadata.columns:
+                raise ValueError(f"Metadata missing column: {col}")
+
+    def load_patch_data(self):
         try:
-            with h5py.File(self.data_path, "r") as f:
+            with h5py.File(self.patch_path, "r") as f:
                 self.metadata = pd.DataFrame(f["metadata"][:])
                 self.channel_names = [
                     name.decode("utf-8") for name in f["channel_names"][:]
@@ -203,9 +249,9 @@ class SpatialDataset:
     def generate_data_splits(
         self,
         stratify_by: str,
-        train_size=None,
-        val_size=None,
-        test_size=None,
+        train_size: float = 0.6,
+        val_size: float = 0.2,
+        test_size: float = 0.2,
         save_dir=None,
         random_state=None,
         shuffle=True,
@@ -248,7 +294,7 @@ class SpatialDataset:
             tolerance = {"eps": 0.01, "train_lb": 0.5, "n_tol": 100}
         if save_dir is None:
             self.split_dir = os.path.join(
-                os.path.dirname(self.data_path), DefaultFolderName.split.value
+                self.root_dir, DefaultFolderName.split.value
             )  # default save directory
         else:
             self.split_dir = save_dir
@@ -284,6 +330,7 @@ class SpatialDataset:
             print("Saving splits...")
             self.save_splits(patient_split, label_name=stratify_by)
             print(f"Data splits saved to {self.split_dir}")
+            self.get_split_info()
         return patient_split
 
     @staticmethod
@@ -300,9 +347,9 @@ class SpatialDataset:
     def get_patient_splits(
         self,
         stratify_by,
-        train_size=0.6,
-        val_size=0.2,
-        test_size=0.2,
+        train_size,
+        val_size,
+        test_size,
         random_state=42,
         shuffle=True,
         n_tol=100,
@@ -353,7 +400,7 @@ class SpatialDataset:
     def summarize_split(self):
         pass
 
-    def save_splits(self, patient_split, label_name=CellType.cd8.value):
+    def save_splits(self, patient_split, label_name=ColName.contains_cd8.value):
         # import torch
         from tqdm import tqdm
 
@@ -364,7 +411,7 @@ class SpatialDataset:
         }
 
         # read in image data
-        with h5py.File(self.data_path, "r") as f:
+        with h5py.File(self.patch_path, "r") as f:
             patches = f["images"][:]
 
         # iterate over splits and save patches
@@ -375,7 +422,7 @@ class SpatialDataset:
         ):
             index = split_index[split_name.value]
             _patches = patches[index, ...]
-            _labels = self.metadata.iloc[index][label_name].values
+            _labels = self.metadata.iloc[index][label_name].values.astype(int)
             _ids = self.metadata.iloc[index][ColName.patch_id.value].values
             metadata_to_save = self.metadata.iloc[index][
                 [

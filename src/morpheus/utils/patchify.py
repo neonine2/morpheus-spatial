@@ -1,83 +1,166 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 
-def verify_input_data(df, required_columns):
-    if not set(required_columns).issubset(df.columns):
-        raise ValueError(
-            f"Dataframe does not contain all required columns: {required_columns}"
+
+def generate_patches_optimized(
+    df, patch_size, pixel_size, cell_types, molecule_columns: list, mask_cell_types=None
+):
+    # Reorder the molecule_columns to match the order in the input DataFrame
+    molecule_columns = [col for col in df.columns if col in molecule_columns]
+    num_channels = len(molecule_columns)
+
+    # Get all combinations of image numbers and patient IDs in the DataFrame
+    all_image = df[["ImageNumber", "PatientID"]].drop_duplicates()
+
+    patches = []
+    metadata = []
+
+    for _, image in all_image.iterrows():
+        # Filter the DataFrame for the current image and patient
+        image_number, patient_id = image["ImageNumber"], image["PatientID"]
+        image_df = filter_dataframe(df, image_number, patient_id)
+
+        min_x, min_y, max_x, max_y = calculate_image_dimensions(image_df, pixel_size)
+        num_patches_x, num_patches_y = calculate_num_patches(
+            min_x, min_y, max_x, max_y, patch_size
         )
-    return True
+        patch_indices = create_patch_indices(num_patches_x, num_patches_y)
+        start_x, end_x, start_y, end_y = calculate_patch_boundaries(
+            patch_indices, min_x, min_y, patch_size
+        )
 
-def image_to_patch(df, 
-                   patch_dim, 
-                   width=None, 
-                   height=None, 
-                   recinterval=True):
-    
-    df = df.copy(deep=True)
-    df['PatchNumber'], df['x0'], df['y0'] = np.nan, np.nan, np.nan
-    df['PatchNumber'] = df['PatchNumber'].astype('Int64')
-    pth_x = patch_dim[0]
-    pth_y = patch_dim[1]
-    if width is None and height is None:
-        width = int(np.ceil(np.max(df.Location_Center_X)/patch_dim[0]))
-        height = int(np.ceil(np.max(df.Location_Center_Y)/patch_dim[1]))
-    for ii in range(width):
-        for jj in range(height):
-            x0, x1 = ii*pth_x,(ii+1)*pth_x
-            y0, y1 = jj*pth_y,(jj+1)*pth_y
-            in_Patch = df['Location_Center_X'].between(x0,x1,inclusive="left") & \
-                                df['Location_Center_Y'].between(y0,y1,inclusive="left")
-            if np.sum(in_Patch)>0:
-                df.loc[in_Patch,'PatchNumber'] = ii*height+jj
-                if recinterval:
-                    df.loc[in_Patch,'x0'] = x0
-                    df.loc[in_Patch,'y0'] = y0
-    return df
+        patch_metadata = create_patch_metadata(
+            image_number, patient_id, patch_indices, cell_types
+        )
+        image_array = convert_to_numpy_array(image_df, molecule_columns)
 
-def get_patch_coord(df, patch_sz):
-    df = df.copy(deep=True)
-    df = df[['ImageNumber','PatchNumber', 'x0','y0']]
-    coord = df.groupby(['ImageNumber','PatchNumber']).mean()[['x0','y0']].groupby('ImageNumber').mean().reset_index(drop=True).to_numpy()/patch_sz
-    return coord.astype('int')
+        for i in range(len(patch_indices)):
+            patch_cells = filter_cells_in_patch(
+                image_array, start_x[i], end_x[i], start_y[i], end_y[i], pixel_size
+            )
+            # if len(patch_cells) == 0:  # Skip empty patches
+            # continue
+            patch_array = create_patch_array(patch_size, num_channels)
+            patch_array = fill_patch_array(
+                patch_array,
+                patch_cells,
+                start_x[i],
+                start_y[i],
+                pixel_size,
+                mask_cell_types,
+            )
 
-def patch_to_pixel(df, width, height, pixel_dim):
-    df = df.copy(deep=True)
-    df.loc[:,'Location_Center_X'] = df['Location_Center_X']-df['x0']
-    df.loc[:,'Location_Center_Y'] = df['Location_Center_Y']-df['y0']
-    
-    # assign new ImageNumber such that each patch is now considered a unique image
-    val = (df['ImageNumber']-1)*(df['PatchNumber'].max()+1) + df['PatchNumber']
-    df['original_ImageNumber'] = df['ImageNumber']
-    df['ImageNumber'] = val.astype(int)
-    df = image_to_patch(df,pixel_dim,width,height,recinterval=False)
-    return df
+            patches.append(patch_array)
+            update_patch_metadata(
+                patch_metadata,
+                i,
+                image_df,
+                patch_cells[:, image_df.columns.get_loc("CellType")],
+                cell_types,
+            )
 
-def patch_to_matrix(df, width, height, typeName, celltype, genelist, channel_to_remove=[]):
-    df = df.copy(deep=True)
-    if not isinstance(celltype,list):
-        celltype = [celltype]
-    for cell in celltype:
-        df[cell] = df[typeName]==cell
-    genes_to_keep = [gene for gene in genelist if gene not in set(channel_to_remove)]
-    df = df[['ImageNumber','PatchNumber','original_ImageNumber']+genes_to_keep+celltype]
-    nchannel = len(genes_to_keep)
-    label = df.groupby(['ImageNumber']).max()[celltype]
-    
-    groupedpixel = df.groupby(['ImageNumber','PatchNumber'])
-    groupedsum = groupedpixel.sum()
-    groupedsum['original_ImageNumber'] = groupedpixel.mean()['original_ImageNumber']
-    groupedsum = groupedsum.reset_index()
-    groupedimage = groupedsum.groupby(['ImageNumber'])
-    list_of_image = [v for k, v in groupedimage]
-    nsample = len(list_of_image)
+        metadata.append(patch_metadata)
 
-    intensity = np.zeros([nsample, nchannel, height, width])
-    for i, image in enumerate(list_of_image):
-        linear_index = image['PatchNumber'].tolist()
-        col, row = np.unravel_index(linear_index, (height, width))
-        row = width - row - 1
-        intensity[i,:,row,col] = image[genes_to_keep].to_numpy()
-    return intensity, label, genes_to_keep, groupedsum
+    patches_array = np.array(patches)
+    metadata_df = pd.concat(metadata, ignore_index=True)
+
+    return patches_array, metadata_df
 
 
+def filter_dataframe(df, image_number, patient_id):
+    return df[(df["ImageNumber"] == image_number) & (df["PatientID"] == patient_id)]
+
+
+def calculate_image_dimensions(image_df, pixel_size):
+    min_x = int(image_df["Location_Center_X"].min() // pixel_size)
+    min_y = int(image_df["Location_Center_Y"].min() // pixel_size)
+    max_x = int(image_df["Location_Center_X"].max() // pixel_size) + 1
+    max_y = int(image_df["Location_Center_Y"].max() // pixel_size) + 1
+    return min_x, min_y, max_x, max_y
+
+
+def calculate_num_patches(min_x, min_y, max_x, max_y, patch_size):
+    num_patches_x = (max_x - min_x) // patch_size
+    num_patches_y = (max_y - min_y) // patch_size
+    return num_patches_x, num_patches_y
+
+
+def calculate_patch_boundaries(patch_indices, min_x, min_y, patch_size):
+    start_x = patch_indices[:, 0] * patch_size + min_x
+    end_x = start_x + patch_size
+    start_y = patch_indices[:, 1] * patch_size + min_y
+    end_y = start_y + patch_size
+    return start_x, end_x, start_y, end_y
+
+
+def create_patch_indices(num_patches_x, num_patches_y):
+    return np.mgrid[0:num_patches_x, 0:num_patches_y].reshape(2, -1).T
+
+
+def create_patch_metadata(image_number, patient_id, patch_indices, cell_types):
+    patch_metadata = pd.DataFrame(
+        {
+            "ImageNumber": image_number,
+            "PatientID": patient_id,
+            "PatchIndex_X": patch_indices[:, 0],
+            "PatchIndex_Y": patch_indices[:, 1],
+        }
+    )
+    for cell_type in cell_types:
+        patch_metadata[f"Contains_{cell_type}"] = False
+    return patch_metadata
+
+
+def convert_to_numpy_array(image_df, molecule_columns):
+    return image_df[
+        ["Location_Center_X", "Location_Center_Y", "CellType"] + molecule_columns
+    ].values
+
+
+def filter_cells_in_patch(image_array, start_x, end_x, start_y, end_y, pixel_size):
+    mask = (
+        (image_array[:, 0] >= start_x * pixel_size)
+        & (image_array[:, 0] < end_x * pixel_size)
+        & (image_array[:, 1] >= start_y * pixel_size)
+        & (image_array[:, 1] < end_y * pixel_size)
+    )
+    return image_array[mask]
+
+
+def create_patch_array(patch_size, num_channels):
+    return np.zeros((patch_size, patch_size, num_channels))
+
+
+def fill_patch_array(
+    patch_array, patch_cells, start_x, start_y, pixel_size, mask_cell_types
+):
+    x_indices = ((patch_cells[:, 0] - start_x * pixel_size) // pixel_size).astype(int)
+    y_indices = ((patch_cells[:, 1] - start_y * pixel_size) // pixel_size).astype(int)
+
+    if mask_cell_types is not None:
+        mask_indices = np.isin(patch_cells[:, 2], mask_cell_types)
+        patch_cells = (
+            patch_cells.copy()
+        )  # Create a copy to avoid modifying the original array
+        patch_cells[mask_indices, 3:] = 0
+
+    # Ensure that x_indices and y_indices are within the valid range
+    valid_indices = (
+        (x_indices >= 0)
+        & (x_indices < patch_array.shape[1])
+        & (y_indices >= 0)
+        & (y_indices < patch_array.shape[0])
+    )
+    x_indices = x_indices[valid_indices]
+    y_indices = y_indices[valid_indices]
+    patch_cells = patch_cells[valid_indices]
+
+    np.add.at(patch_array, (y_indices, x_indices), patch_cells[:, 3:])
+
+    return patch_array
+
+
+def update_patch_metadata(patch_metadata, i, image_df, patch_cell_types, cell_types):
+    for cell_type in cell_types:
+        if cell_type in patch_cell_types:
+            patch_metadata.at[i, f"Contains_{cell_type}"] = True
