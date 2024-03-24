@@ -19,8 +19,9 @@ def train(
 ):
     if trainer_params is None:
         trainer_params = {
-            "max_epochs": 80,
+            "max_epochs": 100,
             "accelerator": "auto",
+            "devices": "auto",
             "logger": False,
         }
     if dataloader_params is None:
@@ -44,7 +45,7 @@ def train(
                 monitor="val_bmc",
                 mode="max",
                 save_top_k=1,
-                save_weights_only=True,
+                save_weights_only=False,
                 verbose=False,
             ),
             EarlyStopping(

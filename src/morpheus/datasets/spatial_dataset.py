@@ -107,6 +107,19 @@ class SpatialDataset:
         Returns:
 
         """
+        # check the save_path is not already present
+        if save:
+            self.patch_path = (
+                save_path
+                if save_path is not None
+                else os.path.join(self.root_dir, DefaultFileName.patch.value)
+            )
+            if os.path.isfile(self.patch_path):
+                print(f"File {self.patch_path} already exists, not saving patches")
+                self.load_patch_data()
+                self.check_loaded_patch()
+                return
+
         # print out details about the patches
         print(f"Generating patches of size {patch_size}x{patch_size} pixels")
         print(f"Pixel size: {pixel_size}x{pixel_size} microns")
@@ -138,35 +151,25 @@ class SpatialDataset:
             raise ValueError("Number of patches generated does not match metadata")
 
         if save:
-            # check the save_path is not already present
-            self.patch_path = (
-                save_path
-                if save_path is not None
-                else os.path.join(self.root_dir, DefaultFileName.patch.value)
-            )
-            if os.path.isfile(self.patch_path):
-                print(f"File {self.patch_path} already exists, not saving patches")
-            else:
-                with h5py.File(self.patch_path, "w") as f:
-                    # Create a dataset to store the images
-                    f.create_dataset(
-                        "images",
-                        data=patches_array,
-                        compression="gzip",
-                        chunks=(min(n, 100), h, w, c),
-                        dtype=patches_array.dtype,
-                    )
+            with h5py.File(self.patch_path, "w") as f:
+                # Create a dataset to store the images
+                f.create_dataset(
+                    "images",
+                    data=patches_array,
+                    compression="gzip",
+                    chunks=(min(n, 100), h, w, c),
+                    dtype=patches_array.dtype,
+                )
 
-                    # Create a dataset to store the metadata
-                    metadata_numpy = metadata_df.to_records(index=False)
-                    f.create_dataset(
-                        "metadata", data=metadata_numpy, dtype=metadata_numpy.dtype
-                    )
+                # Create a dataset to store the metadata
+                metadata_numpy = metadata_df.to_records(index=False)
+                f.create_dataset(
+                    "metadata", data=metadata_numpy, dtype=metadata_numpy.dtype
+                )
 
-                    # Create a dataset to store the channel names
-                    f.create_dataset("channel_names", data=self.channel_names)
-                print(f"Patches saved to {self.patch_path}")
-
+                # Create a dataset to store the channel names
+                f.create_dataset("channel_names", data=self.channel_names)
+            print(f"Patches saved to {self.patch_path}")
             self.load_patch_data()
             self.check_loaded_patch()
         return
@@ -468,28 +471,6 @@ class SpatialDataset:
         # save normalization parameters to json
         with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
             json.dump(normalization_params, f)
-
-    def load_model(self, model_path: str, arch="unet"):
-        """
-        Load the trained model.
-
-        Args:
-            model_path (str): Path to the model checkpoint.
-            arch (str): Model architecture. Either 'mlp' or 'cnn'.
-
-        Returns:
-            torch.nn.Module: Loaded model.
-        """
-        from ..classification import PatchClassifier
-
-        model = PatchClassifier.load_from_checkpoint(
-            model_path,
-            in_channels=self.n_channels,
-            img_size=self.img_size,
-            arch=arch,
-        )
-        model.eval()
-        return model
 
     def load_from_metadata(self, metadata):
         """

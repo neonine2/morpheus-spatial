@@ -9,7 +9,7 @@ class PatchClassifier(light.LightningModule):
     def __init__(
         self,
         in_channels,
-        img_size=(16, 16),
+        img_size,
         arch="unet",
         num_target_classes=2,
         optimizer="adam",
@@ -23,6 +23,11 @@ class PatchClassifier(light.LightningModule):
         self.optimizer = optimizer
         self.optimizer_params = optimizer_params
         self.arch = arch.lower()
+
+        # save hyperparameters
+        self.save_hyperparameters()
+
+        # build model
         self.build_model(in_channels, img_size)
 
     def build_model(self, in_channels, img_size):
@@ -113,6 +118,30 @@ class PatchClassifier(light.LightningModule):
             mode + "_acc": test_acc,
         }
         return metric_dict
+
+
+def load_model(model_path: str, eval: bool = True):
+    """
+    Load the trained model.
+
+    Args:
+        model_path (str): Path to the model checkpoint.
+
+    Returns:
+        torch.nn.Module: Loaded model.
+    """
+    from ..classification import PatchClassifier
+
+    model = PatchClassifier.load_from_checkpoint(
+        model_path,
+        # in_channels=self.n_channels,
+        # img_size=self.img_size,
+        # arch=arch,
+    )
+
+    if eval:
+        model.eval()
+    return model
 
 
 def get_prediction(model, data_loader):
