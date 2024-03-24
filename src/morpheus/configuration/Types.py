@@ -7,8 +7,10 @@ class ColName(Enum):
     cell_type = "CellType"
     cell_x = "Location_Center_X"
     cell_y = "Location_Center_Y"
-    patch_id = "patch_index"
+    patch_id = "patch_id"
     splits = "splits"
+    contains_tumor = "Contains_Tumor"
+    contains_cd8 = "Contains_Tcytotoxic"
 
 
 class CellType(Enum):
@@ -31,3 +33,4 @@ class DefaultFolderName(Enum):
 class DefaultFileName(Enum):
     label = "label.csv"
     kdtree = "kdtree.pkl"
+    patch = "patch.h5"

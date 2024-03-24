@@ -31,7 +31,7 @@ class TorchDataset(Dataset):
     def __getitem__(self, idx):
         """Generates one sample of data"""
         # Get data and label
-        label = self.img_labels.iloc[idx][self.label_name]
+        label = int(self.img_labels.iloc[idx][self.label_name])
         patch_id = self.img_labels.iloc[idx][ColName.patch_id.value]
         img_path = os.path.join(self.img_dir, f"{label}/patch_{patch_id}.npy")
         image = np.load(img_path)
