@@ -78,10 +78,7 @@ class SpatialDataset:
         return
 
     def load_input_csv(self):
-        try:
-            data = pd.read_csv(self.input_path)
-        except Exception as e:
-            print(f"Error loading input CSV: {e}")
+        data = pd.read_csv(self.input_path)
         return data
 
     def generate_masked_patch(
@@ -324,7 +321,9 @@ class SpatialDataset:
             )
 
         if patient_split is None:
-            raise ValueError("Could not satisfy data split constraints, try again or adjust constraints")
+            raise ValueError(
+                "Could not satisfy data split constraints, try again or adjust constraints"
+            )
 
         if save:
             print("Saving splits...")
