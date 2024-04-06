@@ -7,7 +7,6 @@ from typing import Optional
 import torch
 
 from tqdm import tqdm
-from multiprocessing import Pool
 
 # import multiprocessing
 
@@ -240,15 +239,18 @@ def generate_one_cf(
         if model.arch != "mlp":
             cf = torch.permute(cf, (0, 2, 3, 1))
 
-        print(f"Counterfactual probability: {cf_prob}")
-        print(f"Computed probability: {counterfactual_probabilities}")
+        print(f"Counterfactual probability: {counterfactual_probabilities}")
         X_perturbed = mean_preserve_dimensions(
             cf * stdev + mu, preserveAxis=cf.ndim - 1
         )
         original_patch = X_mean * stdev + mu
         cf_delta = (X_perturbed - original_patch) / original_patch * 100
-        print(f"cf delta: {cf_delta}")
-        cf_perturbed = dict(zip(channel[is_perturbed], cf_delta[is_perturbed].numpy()))
+        cf_perturbed = dict(
+            zip(
+                np.array(channel)[is_perturbed],
+                cf_delta[is_perturbed].numpy(),
+            )
+        )
         print(f"cf perturbed: {cf_perturbed}")
 
         if save_dir is not None:
@@ -258,7 +260,7 @@ def generate_one_cf(
                 saved_file,
                 explanation=explanation,
                 cf_perturbed=cf_perturbed,
-                channel_to_perturb=channel[is_perturbed],
+                channel_to_perturb=np.array(channel)[is_perturbed],
             )
     return explanation
 
