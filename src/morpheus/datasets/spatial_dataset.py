@@ -19,7 +19,7 @@ class SpatialDataset:
     def __init__(
         self,
         input_path: str,
-        channel_names: list,
+        channel_names: list = [],
         patch_path: str = None,
         split_dir: str = None,
         model_dir: str = None,
@@ -29,9 +29,6 @@ class SpatialDataset:
         self.metadata = None
         self.input_path = input_path
         self.root_dir = os.path.dirname(input_path)
-
-        if len(channel_names) == 0:
-            raise ValueError("Channel names must be provided")
 
         data = self.load_input_csv()
         self.check_input_csv(data, channel_names)  # also sets self.channel_names
@@ -64,7 +61,14 @@ class SpatialDataset:
             ColName.cell_type.value,
             ColName.cell_x.value,
             ColName.cell_y.value,
-        ] + channel_names
+        ]
+        if len(channel_names) == 0:
+            channel_names = [
+                col for col in input_csv.columns if col not in required_cols
+            ]
+            print(f"Channel names inferred from input CSV: {channel_names}")
+        required_cols += channel_names
+
         for col in required_cols:
             if col not in input_csv.columns:
                 warnings.warn("input csv does not contain required column: {col}")

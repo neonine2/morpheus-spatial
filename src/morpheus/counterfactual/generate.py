@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 
 from ..datasets import SpatialDataset
-from .cf import Counterfactual
+from .cf_in_progress import Counterfactual
 from ..confidence import TrustScore
 from ..configuration import (
     Splits,
@@ -166,15 +166,25 @@ def generate_one_cf(
      Returns:
          None
     """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     # Obtain data features
     stdev, mu = (
-        torch.tensor(stdev).float(),
-        torch.tensor(mu).float(),
+        torch.tensor(stdev, device=device).float(),
+        torch.tensor(mu, device=device).float(),
     )
     H, _, C = original_patch.shape
-    original_patch = (torch.from_numpy(original_patch).float() - mu) / stdev
+    original_patch = (torch.from_numpy(original_patch).float().to(device) - mu) / stdev
     original_class = torch.tensor([original_class], dtype=torch.int64)
     X_mean = torch.mean(original_patch, dim=(0, 1))
+
+    # move variables to cuda if available
+    if torch.cuda.is_available():
+        original_patch = original_patch.cuda()
+        original_class = original_class.cuda()
+        X_mean = X_mean.cuda()
+        stdev = stdev.cuda()
+        mu = mu.cuda()
 
     if model.arch == "mlp":
         original_patch = X_mean
@@ -230,16 +240,17 @@ def generate_one_cf(
     if explanation.cf is not None:
         cf_prob = explanation.cf["proba"][0]
         cf = explanation.cf["X"][0]
+        proba = explanation.cf["proba"][0]
 
         # manually compute probability of cf
-        cf = input_transform(torch.from_numpy(cf[None, :]))
-        counterfactual_probabilities = (
-            altered_model(cf) if model.arch == "mlp" else model(cf)
-        )
+        cf = input_transform(torch.from_numpy(cf[None, :]).to(device))
+        # counterfactual_probabilities = (
+        # altered_model(cf) if model.arch == "mlp" else model(cf)
+        # )
         if model.arch != "mlp":
             cf = torch.permute(cf, (0, 2, 3, 1))
 
-        print(f"Counterfactual probability: {counterfactual_probabilities}")
+        print(f"Counterfactual probability: {proba}")
         X_perturbed = mean_preserve_dimensions(
             cf * stdev + mu, preserveAxis=cf.ndim - 1
         )
@@ -248,7 +259,7 @@ def generate_one_cf(
         cf_perturbed = dict(
             zip(
                 np.array(channel)[is_perturbed],
-                cf_delta[is_perturbed].numpy(),
+                cf_delta[is_perturbed].cpu().numpy(),
             )
         )
         print(f"cf perturbed: {cf_perturbed}")

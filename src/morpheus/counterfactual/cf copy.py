@@ -49,57 +49,7 @@ class Counterfactual(Explainer, FitMixin):
         sess: Optional[tf.Session] = None,
         verbose: bool = False,
     ) -> None:
-        """
-        Initialize prototypical counterfactual method.
-
-        Parameters
-        ----------
-        predict
-            `tensorflow` model or any other model's prediction function returning class probabilities.
-        shape
-            Shape of input data starting with batch size.
-        kappa
-            Confidence parameter for the attack loss term.
-        beta
-            Regularization constant for L1 loss term.
-        feature_range
-            Tuple with `min` and `max` ranges to allow for perturbed instances. `Min` and `max` ranges can be `float`
-            or `numpy` arrays with dimension (1x nb of features) for feature-wise ranges.
-        gamma
-            Regularization constant for optional auto-encoder loss term.
-        ae_model
-            Optional auto-encoder model used for loss regularization.
-        enc_model
-            Optional encoder model used to guide instance perturbations towards a class prototype.
-        theta
-            Constant for the prototype search loss term.
-        use_kdtree
-            Whether to use k-d trees for the prototype loss term if no encoder is available.
-        learning_rate_init
-            Initial learning rate of optimizer.
-        max_iterations
-            Maximum number of iterations for finding a counterfactual.
-        c_init
-            Initial value to scale the attack loss term.
-        c_steps
-            Number of iterations to adjust the constant scaling the attack loss term.
-        eps
-            If numerical gradients are used to compute `dL/dx = (dL/dp) * (dp/dx)`, then `eps[0]` is used to
-            calculate `dL/dp` and `eps[1]` is used for `dp/dx`. `eps[0]` and `eps[1]` can be a combination of `float`
-            values and `numpy` arrays. For `eps[0]`, the array dimension should be (1x nb of prediction categories)
-            and for `eps[1]` it should be (1x nb of features).
-        clip
-            Tuple with min and max clip ranges for both the numerical gradients and the gradients
-            obtained from the `tensorflow` graph.
-        update_num_grad
-            If numerical gradients are used, they will be updated every `update_num_grad` iterations.
-        trustscore
-            Directory where trustscore object is to be used
-        write_dir
-            Directory to write `tensorboard` files to.
-        sess
-            Optional `tensorflow` session that will be used if passed instead of creating or inferring one internally.
-        """
+ 
         super().__init__(meta=copy.deepcopy(DEFAULT_META))
 
         # if image as input
@@ -140,12 +90,7 @@ class Counterfactual(Explainer, FitMixin):
         else:
             self.sess = model_sess
 
-        if is_model:  # Keras or TF model
-            self.model = True
-            self.classes = self.predict.predict(np.zeros(shape)).shape[1]  # type: ignore
-        else:  # black-box model
-            self.model = False
-            self.classes = self.predict(torch.zeros(size=shape)).shape[1]
+        self.classes = self.predict.predict(np.zeros(shape)).shape[1]  # type: ignore
 
         if is_enc:
             self.enc_model = True
@@ -335,9 +280,7 @@ class Counterfactual(Explainer, FitMixin):
                 self.loss_ae_s = tf.constant(0.0)
 
         with tf.name_scope("loss_attack") as scope:
-            if not self.model:
-                self.loss_attack = tf.placeholder(tf.float32)
-            elif (
+            if (
                 self.c_init == 0.0 and self.c_steps == 1
             ):  # prediction loss term not used
                 # make predictions on perturbed instance
@@ -397,15 +340,9 @@ class Counterfactual(Explainer, FitMixin):
 
         with tf.name_scope("loss_combined") as scope:
             # no need for L1 term in loss to optimize when using FISTA
-            if self.model:
-                self.loss_opt = (
-                    self.loss_attack_s
-                    + self.loss_l2_s
-                    + self.loss_ae_s
-                    + self.loss_proto_s
-                )
-            else:  # separate numerical computation of loss attack gradient
-                self.loss_opt = self.loss_l2_s + self.loss_ae_s + self.loss_proto_s
+            self.loss_opt = (
+                self.loss_attack_s + self.loss_l2_s + self.loss_ae_s + self.loss_proto_s
+            )
 
             # add L1 term to overall loss; this is not the loss that will be directly optimized
             self.loss_total = (
@@ -688,20 +625,6 @@ class Counterfactual(Explainer, FitMixin):
         assert self.batch_size == X.shape[0]
 
         def compare(x: Union[float, int, np.ndarray], y: int) -> bool:
-            """
-            Compare predictions with target labels and return whether counterfactual conditions hold.
-
-            Parameters
-            ----------
-            x
-                Predicted class probabilities or labels.
-            y
-                Target or predicted labels.
-
-            Returns
-            -------
-            Bool whether counterfactual conditions hold.
-            """
             if not isinstance(x, (float, int, np.int64)):
                 x = np.copy(x)
                 x[y] += self.kappa  # type: ignore
@@ -812,43 +735,12 @@ class Counterfactual(Explainer, FitMixin):
                 grads_num = np.zeros(pert_shape)
                 grads_num_s = np.zeros(pert_shape)
 
-                # check if numerical gradient computation is needed
-                if not self.model and (self.c_init != 0.0 or self.c_steps > 1):
-                    X_der = self.adv.eval(session=self.sess)
-                    X_der_s = self.adv_s.eval(session=self.sess)
-                    X_der_batch.append(X_der)
-                    X_der_batch_s.append(X_der_s)
-
-                    if (
-                        i % self.update_num_grad == 0 and i > 0
-                    ):  # compute numerical gradients
-                        c = self.const.eval(session=self.sess)
-                        X_der_batch = np.concatenate(X_der_batch)
-                        X_der_batch_s = np.concatenate(X_der_batch_s)
-                        grads_num = (
-                            self.get_gradients(
-                                X_der_batch, Y, grads_shape=pert_shape[1:]
-                            )
-                            * c
-                        )
-                        grads_num_s = (
-                            self.get_gradients(
-                                X_der_batch_s, Y, grads_shape=pert_shape[1:]
-                            )
-                            * c
-                        )
-                        # clip gradients
-                        grads_num = np.clip(grads_num, self.clip[0], self.clip[1])  # type: ignore
-                        grads_num_s = np.clip(grads_num_s, self.clip[0], self.clip[1])  # type: ignore
-                        X_der_batch, X_der_batch_s = [], []
-
                 # compute and clip gradients defined in graph
                 grads_vars_graph = self.sess.run(self.compute_grads)
                 grads_graph = [g for g, _ in grads_vars_graph][0]
                 grads_graph = np.clip(grads_graph, self.clip[0], self.clip[1])
 
                 # apply gradients
-                print(grads_num_s)
                 grads = grads_graph + grads_num_s
                 self.sess.run(self.apply_grads, feed_dict={self.grad_ph: grads})
 
@@ -860,30 +752,19 @@ class Counterfactual(Explainer, FitMixin):
                 # compute overall and attack loss, L1+L2 loss, prediction probabilities
                 # on perturbed instances and new adv
                 # L1+L2 and prediction probabilities used to see if adv is better than the current best adv under FISTA
-                if self.model:
-                    loss_tot, loss_attack, loss_l1_l2, pred_proba, adv = self.sess.run(
-                        [
-                            self.loss_total,
-                            self.loss_attack,
-                            self.l1_l2,
-                            self.pred_proba,
-                            self.adv,
-                        ]
-                    )
-                else:
-                    X_der = self.adv.eval(
-                        session=self.sess
-                    )  # get updated perturbed instances
-                    # convert X_der to torch tensor
-                    X_der = torch.tensor(X_der, dtype=torch.float32)
-                    pred_proba = self.predict(X_der).detach().numpy()
+                X_der = self.adv.eval(
+                    session=self.sess
+                )  # get updated perturbed instances
+                # convert X_der to torch tensor
+                X_der = torch.tensor(X_der, dtype=torch.float32)
+                pred_proba = self.predict(X_der).detach().numpy()
 
-                    # compute attack, total and L1+L2 losses as well as new perturbed instance
-                    loss_attack = self.loss_fn(pred_proba, Y)
-                    feed_dict = {self.loss_attack: loss_attack}
-                    loss_tot, loss_l1_l2, adv = self.sess.run(
-                        [self.loss_total, self.l1_l2, self.adv], feed_dict=feed_dict
-                    )
+                # compute attack, total and L1+L2 losses as well as new perturbed instance
+                loss_attack = self.loss_fn(pred_proba, Y)
+                feed_dict = {self.loss_attack: loss_attack}
+                loss_tot, loss_l1_l2, adv = self.sess.run(
+                    [self.loss_total, self.l1_l2, self.adv], feed_dict=feed_dict
+                )
 
                 if i % log_every == 0 or i % print_every == 0:
                     loss_l2, loss_l1, loss_ae, loss_proto = self.sess.run(
@@ -944,17 +825,6 @@ class Counterfactual(Explainer, FitMixin):
                             np.mean(grads_graph), np.mean(np.abs(grads_graph))
                         )
                     )  # type: ignore
-                    if not self.model:
-                        print(
-                            "Gradient numerical attack min/max: {:.3f}/{:.3f}".format(
-                                grads_num.min(), grads_num.max()
-                            )
-                        )  # type: ignore
-                        print(
-                            "Gradient numerical mean/abs mean: {:.3f}/{:.3f}".format(
-                                np.mean(grads_num), np.mean(np.abs(grads_num))
-                            )
-                        )  # type: ignore
                     sys.stdout.flush()
 
                 # update best perturbation (distance) and class probabilities
@@ -1097,10 +967,7 @@ class Counterfactual(Explainer, FitMixin):
         data = copy.deepcopy(DEFAULT_DATA)
 
         # if Y is None:
-        if self.model:
-            Y_proba = self.predict.predict(X)  # type: ignore
-        else:
-            Y_proba = self.predict(X)
+        Y_proba = self.predict.predict(X)  # type: ignore
         Y_ohe = np.zeros(Y_proba.shape)
         Y_class = np.argmax(Y_proba.detach(), axis=1)
         Y_ohe[np.arange(Y_proba.shape[0]), Y_class] = 1

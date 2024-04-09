@@ -93,9 +93,7 @@ class Counterfactual(Explainer, FitMixin):
 
         # if image as input
         if len(shape) > 2:
-            patch_shape = shape[
-                1:
-            ]  # should be [x length, y length, and number of color channels]
+            patch_shape = shape[1:]  # should be [x length, y length, and channels]
             shape = (shape[0], shape[-1])
         else:
             patch_shape = shape
@@ -457,7 +455,6 @@ class Counterfactual(Explainer, FitMixin):
         -------
         Overall best attack and gradients for that attack.
         """
-
         # make sure nb of instances in X equals batch size
         assert self.batch_size == X.shape[0]
 
@@ -525,13 +522,14 @@ class Counterfactual(Explainer, FitMixin):
             for c in range(self.classes):
                 if c not in target_class:
                     continue
-                dist_c, idx_c = self.kdtrees[c].query(X_num, k=k)
+                dist_c, idx_c = self.kdtrees[c].query(X_num.cpu(), k=k)
                 dist_proto[c] = dist_c[0][-1]
                 self.class_proto[c] = self.X_by_class[c][idx_c[0][-1]].reshape(1, -1)
 
         if self.enc_or_kdtree:
             self.id_proto = min(dist_proto, key=dist_proto.get)
-            proto_val = self.class_proto[self.id_proto]
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            proto_val = self.class_proto[self.id_proto].to(device)
             if self.verbose:
                 print("Prototype class: {}".format(self.id_proto))
         else:  # no prototype loss term used
@@ -559,7 +557,7 @@ class Counterfactual(Explainer, FitMixin):
             self.target = Y.clone().detach()
             self.const = const.clone().detach()
             self.adv = X_num.clone().detach()
-            self.adv_s = X_num.clone().detach().requires_grad_()
+            self.adv_s = X_num.clone().requires_grad_()
             self.target_proto = proto_val.clone().detach()
 
             # init optimizer
@@ -613,11 +611,7 @@ class Counterfactual(Explainer, FitMixin):
                             self.loss_total, self.loss_attack
                         )
                     )
-                    print(
-                        "L2: {:.3f}, L1: {:.3f}, loss AE: {:.3f}".format(
-                            self.loss_l2, self.loss_l1, self.loss_ae
-                        )
-                    )
+                    print("L2: {:.3f}, L1: {:.3f}".format(self.loss_l2, self.loss_l1))
                     print("Loss proto: {:.3f}".format(self.loss_proto))
                     print(
                         "Target proba: {:.2f}, max non target proba: {:.2f}".format(
@@ -665,7 +659,6 @@ class Counterfactual(Explainer, FitMixin):
                     ):
                         current_best_dist[batch_idx] = dist
                         current_best_proba[batch_idx] = adv_class  # type: ignore
-                        print(adv_class)
 
                     # global
                     if (
@@ -688,7 +681,9 @@ class Counterfactual(Explainer, FitMixin):
             # adjust the 'c' constant for the first loss term
             for batch_idx in range(self.batch_size):
                 if (
-                    compare(current_best_proba[batch_idx], np.argmax(Y[batch_idx]))
+                    compare(
+                        current_best_proba[batch_idx], np.argmax(Y[batch_idx].cpu())
+                    )
                     and current_best_proba[batch_idx] != -1  # type: ignore
                 ):
                     # want to refine the current best solution by putting more emphasis on the regularization terms
@@ -712,7 +707,9 @@ class Counterfactual(Explainer, FitMixin):
                         const[batch_idx] *= 10
 
         # return best overall attack
-        best_attack = np.concatenate(overall_best_attack, axis=0)
+        best_attack = np.concatenate(
+            [item.cpu() for item in overall_best_attack], axis=0
+        )
         if best_attack.shape != self.shape:
             best_attack = np.expand_dims(best_attack, axis=0)
 
@@ -771,19 +768,20 @@ class Counterfactual(Explainer, FitMixin):
                 "but first dim = %s",
                 X.shape[0],
             )
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # output explanation dictionary
         data = copy.deepcopy(DEFAULT_DATA)
 
         # add original prediction to explanation
-        Y_proba = self.predict(X)
-        if Y is None:
-            Y_ohe = np.zeros(Y_proba.shape)
-            Y_class = np.argmax(Y_proba, axis=1)
-            Y_ohe[np.arange(Y_proba.shape[0]), Y_class] = 1
-            Y = Y_ohe.clone()
+        Y_proba = self.predict(X).detach().cpu().numpy()
+        Y_ohe = np.zeros(Y_proba.shape)
+        Y_class = np.argmax(Y_proba, axis=1)
+        Y_ohe[np.arange(Y_proba.shape[0]), Y_class] = 1
+        Y = torch.from_numpy(Y_ohe).clone().to(device)
+
         data["orig_proba"] = Y_proba
-        data["orig_class"] = torch.argmax(Y_proba, dim=1)[0]
+        data["orig_class"] = np.argmax(Y_proba, axis=1)[0]
 
         # find best counterfactual
         self.best_attack = False  # flag to indicate whether a CF was found
@@ -813,10 +811,15 @@ class Counterfactual(Explainer, FitMixin):
         data["all"] = self.cf_global
         data["cf"] = {}
         data["cf"]["X"] = best_attack
-        Y_pert = self.predict(torch.from_numpy(best_attack)).detach().numpy()
+        Y_pert = (
+            self.predict(torch.from_numpy(best_attack).to(device))
+            .detach()
+            .cpu()
+            .numpy()
+        )
         data["cf"]["proba"] = Y_pert
         data["cf"]["class"] = np.argmax(Y_pert, axis=1)[0]
-        data["cf"]["grads"] = grads.detach().numpy()
+        data["cf"]["grads"] = grads.detach().cpu().numpy()
 
         # create explanation object
         explanation = Explanation(meta=copy.deepcopy(self.meta), data=data)
