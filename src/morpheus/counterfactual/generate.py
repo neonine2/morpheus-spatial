@@ -10,9 +10,8 @@ from tqdm import tqdm
 
 # import multiprocessing
 
-
 from ..datasets import SpatialDataset
-from .cf_in_progress import Counterfactual
+from .cf import Counterfactual
 from ..confidence import TrustScore
 from ..configuration import (
     Splits,
@@ -56,6 +55,11 @@ def get_counterfactual(
         train_data (str, optional): Path to the training data. Defaults to None.
     """
     num_images = len(images)
+
+    # set default tensor type to cuda if available
+    torch.set_default_tensor_type(
+        torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+    )
 
     # Load normalization parameters
     with open(
@@ -170,8 +174,8 @@ def generate_one_cf(
 
     # Obtain data features
     stdev, mu = (
-        torch.tensor(stdev, device=device).float(),
-        torch.tensor(mu, device=device).float(),
+        torch.tensor(stdev).float(),
+        torch.tensor(mu).float(),
     )
     H, _, C = original_patch.shape
     original_patch = (torch.from_numpy(original_patch).float().to(device) - mu) / stdev
@@ -203,7 +207,10 @@ def generate_one_cf(
     is_perturbed = np.array(
         [True if name in channel_to_perturb else False for name in channel]
     )
-    feature_range = (torch.maximum(-mu / stdev, torch.ones(C) * -4), torch.ones(C) * 4)
+    feature_range = (
+        torch.maximum(-mu / stdev, torch.ones(C) * -4),
+        torch.ones(C) * 4,
+    )
     feature_range[0][~is_perturbed] = X_mean[~is_perturbed] - EPSILON
     feature_range[1][~is_perturbed] = X_mean[~is_perturbed] + EPSILON
 
