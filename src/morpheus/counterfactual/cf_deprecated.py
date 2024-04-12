@@ -42,13 +42,14 @@ class Counterfactual(Explainer, FitMixin):
         max_iterations: int = 1000,
         c_init: float = 10.0,
         c_steps: int = 10,
-        eps: tuple = (1e-4, 1e-4),
+        eps: tuple = (1e-3, 1e-3),
         clip: tuple = (-1000.0, 1000.0),
         update_num_grad: int = 1,
         trustscore: Optional[str] = None,
         write_dir: Optional[str] = None,
         sess: Optional[tf.Session] = None,
         verbose: bool = False,
+        device: str = "cpu",
     ) -> None:
         """
         Initialize prototypical counterfactual method.
@@ -529,7 +530,8 @@ class Counterfactual(Explainer, FitMixin):
         # loss term f(x,d)
         loss = np.maximum(0.0, -nontarget_proba_max + target_proba + self.kappa)
         # c * f(x,d)
-        loss_attack = np.sum(self.const.eval(session=self.sess) * loss)
+        c = self.const.eval(session=self.sess)
+        loss_attack = np.sum(c * loss)
         return loss_attack
 
     def get_gradients(
@@ -646,8 +648,8 @@ class Counterfactual(Explainer, FitMixin):
         k_type: str = "mean",
         threshold: float = 0.0,
         verbose: bool = False,
-        print_every: int = 500,
-        log_every: int = 500,
+        print_every: int = 100,
+        log_every: int = 100,
     ) -> Tuple[np.ndarray, Tuple[np.ndarray, np.ndarray]]:
         """
         Find a counterfactual (CF) for instance `X` using a fast iterative shrinkage-thresholding algorithm (FISTA).
@@ -917,10 +919,6 @@ class Counterfactual(Explainer, FitMixin):
                     self.writer.flush()
 
                 if verbose and i % print_every == 0:
-                    print(
-                        self.adv_s.eval(session=self.sess)
-                        - self.orig.eval(session=self.sess)
-                    )
                     print("\nIteration: {}; Const: {}".format(i, const[0]))
                     print(
                         "Loss total: {:.3f}, loss attack: {:.3f}".format(
@@ -1045,8 +1043,8 @@ class Counterfactual(Explainer, FitMixin):
         k: Optional[int] = None,
         k_type: str = "mean",
         threshold: float = 0.0,
-        print_every: int = 500,
-        log_every: int = 500,
+        print_every: int = 100,
+        log_every: int = 100,
     ) -> Explanation:
         """
         Explain instance and return counterfactual with metadata.

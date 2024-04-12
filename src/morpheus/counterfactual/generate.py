@@ -37,6 +37,7 @@ def get_counterfactual(
     train_data: str = None,
     verbose: bool = False,
     trustscore_kwargs: Optional[dict] = None,
+    device: str = None,
 ):
     """
     Generate counterfactuals for the dataset.
@@ -83,15 +84,32 @@ def get_counterfactual(
             dataset.root_dir, DefaultFolderName.counterfactual.value
         )
     os.makedirs(save_dir, exist_ok=True)
-    dataset.cf_dir = save_dir
 
     # Build kdtree if it does not exist
     if not os.path.exists(kdtree_path):
         build_kdtree(kdtree_path, train_data, model, mu, stdev, trustscore_kwargs)
         print("kdtree saved")
 
-    # Prepare arguments for generate_one_cf function
-    generate_one_cf_args = []
+    # Organize arguments for counterfactual generation
+
+    # used across all images
+    general_args = {
+        "target_class": target_class,
+        "model": model,
+        "channel": dataset.channel_names,
+        "channel_to_perturb": channel_to_perturb,
+        "mu": mu,
+        "stdev": stdev,
+        "kdtree_path": kdtree_path,
+        "verbose": verbose,
+        "optimization_params": optimization_params,
+        "save_dir": save_dir,
+        "threshold": threshold,
+        "device": device,
+    }
+
+    # specific to each image
+    image_args = []
     for i in range(num_images):
         img_path = dataset.generate_patch_path(
             patch_id=images.iloc[i][ColName.patch_id.value],
@@ -100,23 +118,12 @@ def get_counterfactual(
         )
         img, patch_id = SpatialDataset.load_single_image(img_path)
         label = dataset.metadata.iloc[patch_id][dataset.label_name]
-        generate_one_cf_args.append(
-            (
-                img,
-                label,
-                target_class,
-                model,
-                dataset.channel_names,
-                channel_to_perturb,
-                mu,
-                stdev,
-                kdtree_path,
-                verbose,
-                optimization_params,
-                save_dir,
-                patch_id,
-                threshold,
-            )
+        image_args.append(
+            {
+                "original_patch": img,
+                "original_class": label,
+                "patch_id": patch_id,
+            }
         )
 
     # Generate counterfactuals
@@ -129,16 +136,17 @@ def get_counterfactual(
         def generate_one_cf_delayed(args):
             return generate_one_cf(*args)
 
-        dask_tasks = [generate_one_cf_delayed(args) for args in generate_one_cf_args]
+        dask_tasks = [generate_one_cf_delayed(args) for args in image_args]
         _ = dask.compute(*dask_tasks, scheduler="processes", num_workers=num_workers)
     else:
-        for args in tqdm(generate_one_cf_args, total=num_images):
-            generate_one_cf(*args)
+        for args in tqdm(image_args, total=num_images):
+            generate_one_cf(**{**args, **general_args})
 
 
 def generate_one_cf(
     original_patch: np.ndarray,
     original_class: np.ndarray,
+    patch_id: int,
     target_class: int,
     model: torch.nn.Module,
     channel: list,
@@ -149,8 +157,8 @@ def generate_one_cf(
     verbose: bool = False,
     optimization_params: dict = None,
     save_dir: str = None,
-    patch_id: int = None,
     threshold: float = 0.5,
+    device: str = None,
 ) -> None:
     """
     Generate counterfactuals for a given image patch.
@@ -170,7 +178,6 @@ def generate_one_cf(
      Returns:
          None
     """
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Obtain data features
     stdev, mu = (
@@ -235,6 +242,7 @@ def generate_one_cf(
         feature_range=feature_range,
         trustscore=kdtree_path,
         verbose=verbose,
+        device=device,
         **optimization_params,
     )
     cf.fit()
