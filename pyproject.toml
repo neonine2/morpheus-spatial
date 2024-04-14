@@ -14,7 +14,6 @@ torchvision = "^0.15.1"
 h5py = "^3.10.0"
 dill = "^0.3.8"
 scikit-learn = "^1.4.1.post1"
-tensorflow = "2.11.1"
 torch = "2.0.0"
 
 [tool.poetry.group.test.dependencies]

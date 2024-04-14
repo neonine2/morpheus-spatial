@@ -1,98 +1,105 @@
-import os
 from lightning.pytorch import seed_everything
 
-import src.morpheus as mp
+seed_everything(42)
+import morpheus as mp
 
-if __name__ == "__main__":
-    # set random seed
-    seed_everything(42, workers=True)
+data_path = "/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/temp/singlecell.csv"  # change to your own directory
+dataset = mp.SpatialDataset(input_path=data_path)
 
-    # STEP 1: Create a spatial dataset object
-    root_dir = "/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/temp"  # change to your own directory
-    data_path = os.path.join(root_dir, "crc.h5")
+patch_size = 16  # Patch size in pixels
+pixel_size = 3  # Pixel size in microns
+cell_types = ["Tcytotoxic", "Tumor"]  # Specify the cell types of interest
+mask_cell_types = ["Tcytotoxic"]
+dataset.generate_masked_patch(
+    cell_to_mask=mask_cell_types,
+    cell_types=cell_types,
+    patch_size=patch_size,
+    pixel_size=pixel_size,
+    save=True,
+)
 
-    # initialize spatial dataset object
-    livertumor = mp.SpatialDataset(data_path=data_path)
+# example metadata
+print(dataset.metadata.head())
 
-    # STEP 2: Generate data splits to prepare for model training
-    # generate data splits
-    label_name = "Tcytotoxic"
-    livertumor.generate_data_splits(stratify_by=label_name)
 
-    # STEP 3: Train a PyTorch model
-    # # initialize model
-    # model_arch = "unet"
-    # n_channels = livertumor.n_channels
-    # img_size = livertumor.img_size
-    # model = mp.PatchClassifier(n_channels, img_size, arch=model_arch)
+colname = "Contains_Tcytotoxic"
+dataset.generate_data_splits(stratify_by=colname)
 
-    # # train model
-    # trainer_params = {
-    #     "max_epochs": 2,
-    #     "accelerator": "auto",
-    #     "logger": False,
-    # }
-    # model = mp.train(
-    #     model=model,
-    #     dataset=livertumor,
-    #     label_name=label_name,
-    #     trainer_params=trainer_params,
-    # )
+# # initialize model
+# model_arch = "unet"
+# n_channels = dataset.n_channels
+# img_size = dataset.img_size
+# model = mp.PatchClassifier(n_channels, img_size, model_arch)
 
-    # images to generate counterfactuals
-    select_metadata = livertumor.metadata[
-        (livertumor.metadata["Tumor"] == 1)
-        & (livertumor.metadata["Tcytotoxic"] == 0)
-        & (livertumor.metadata["splits"] == "train")
-    ]
-    # channels allowed to be perturbed
-    channel_to_perturb = [
-        "Glnsynthetase",
-        "CCR4",
-        "PDL1",
-        "LAG3",
-        "CD105endoglin",
-        "TIM3",
-        "CXCR4",
-        "PD1",
-        "CYR61",
-        "CD44",
-        "IL10",
-        "CXCL12",
-        "CXCR3",
-        "Galectin9",
-        "YAP",
-    ]
+# # train model
+# trainer_params = {
+#     "max_epochs": 100,  # set to >60 for better performance
+#     "accelerator": "auto",
+#     "logger": False,
+# }
+# model = mp.train(
+#     model=model,
+#     dataset=dataset,
+#     label_name=colname,
+#     trainer_params=trainer_params,
+# )
 
-    # threshold for classification
-    threshold = 0.5
+# images to generate counterfactuals
+dataset.get_split_info()
+select_metadata = dataset.metadata[
+    (dataset.metadata["Contains_Tumor"] == 1)
+    & (dataset.metadata["Contains_Tcytotoxic"] == 0)
+    & (dataset.metadata["splits"] == "train")
+]
 
-    # optimization parameters
-    optimization_param = {
-        "use_kdtree": True,
-        "theta": 40.0,
-        "kappa": 0,  # set to: (threshold - 0.5) * 2
-        "learning_rate_init": 0.1,
-        "beta": 40.0,
-        "max_iterations": 10,
-        "c_init": 1000.0,
-        "c_steps": 5,
-    }
+# channels allowed to be perturbed
+channel_to_perturb = [
+    "Glnsynthetase",
+    "CCR4",
+    "PDL1",
+    "LAG3",
+    "CD105endoglin",
+    "TIM3",
+    "CXCR4",
+    "PD1",
+    "CYR61",
+    "CD44",
+    "IL10",
+    "CXCL12",
+    "CXCR3",
+    "Galectin9",
+    "YAP",
+]
 
-    # load model if needed
-    model_path = os.path.join(
-        livertumor.model_dir, "checkpoints/epoch=49-step=17400.ckpt"
-    )
-    model = livertumor.load_model(model_path, arch="unet")
+# probability cutoff for classification
+threshold = 0.43
 
-    # Generate counterfactuals using trained model
-    cf = mp.get_counterfactual(
-        images=select_metadata.iloc[:10],
-        dataset=livertumor,
-        target_class=1,
-        model=model,
-        channel_to_perturb=channel_to_perturb,
-        optimization_params=optimization_param,
-        threshold=threshold,
-        num_workers=1,
-    )
+# optimization parameters
+optimization_param = {
+    "use_kdtree": True,
+    "theta": 40.0,
+    "kappa": (threshold - 0.5) * 2,
+    "learning_rate_init": 0.1,
+    "beta": 1.0,
+    "max_iterations": 1000,  # set to >1000 for better performance
+    "c_init": 1000.0,
+    "c_steps": 5,
+}
+
+# load model
+model = mp.load_model(f"{dataset.root_dir}/model/checkpoints/epoch=41-step=12432.ckpt")
+
+
+# Generate counterfactuals using trained model
+cf = mp.get_counterfactual(
+    images=select_metadata,
+    dataset=dataset,
+    target_class=1,
+    model=model,
+    channel_to_perturb=channel_to_perturb,
+    optimization_params=optimization_param,
+    threshold=threshold,
+    save_dir=f"{dataset.root_dir}/cf/",
+    device="cpu",
+    num_workers=64,
+)

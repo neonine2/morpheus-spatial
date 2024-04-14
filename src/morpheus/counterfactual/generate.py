@@ -5,11 +5,11 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 import torch
+import multiprocessing
 
 from tqdm import tqdm
 
-# import multiprocessing
-
+from ..classification import load_model
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
 from ..confidence import TrustScore
@@ -35,7 +35,7 @@ def get_counterfactual(
     save_dir: str = None,
     num_workers: int = 1,
     train_data: str = None,
-    verbose: bool = False,
+    verbosity: int = 0,
     trustscore_kwargs: Optional[dict] = None,
     device: str = None,
 ):
@@ -55,7 +55,6 @@ def get_counterfactual(
         num_workers (bool, optional): Number of workers to use for parallel processing. Defaults to None.
         train_data (str, optional): Path to the training data. Defaults to None.
     """
-    num_images = len(images)
 
     # set default tensor type to cuda if available
     torch.set_default_tensor_type(
@@ -101,7 +100,7 @@ def get_counterfactual(
         "mu": mu,
         "stdev": stdev,
         "kdtree_path": kdtree_path,
-        "verbose": verbose,
+        "verbosity": verbosity,
         "optimization_params": optimization_params,
         "save_dir": save_dir,
         "threshold": threshold,
@@ -110,7 +109,7 @@ def get_counterfactual(
 
     # specific to each image
     image_args = []
-    for i in range(num_images):
+    for i in range(len(images)):
         img_path = dataset.generate_patch_path(
             patch_id=images.iloc[i][ColName.patch_id.value],
             label=images.iloc[i][dataset.label_name],
@@ -126,21 +125,52 @@ def get_counterfactual(
             }
         )
 
+    discard_mask = [
+        args["original_class"] == target_class
+        or model(
+            torch.from_numpy(
+                np.transpose((args["original_patch"] - mu) / stdev, (2, 0, 1))[None, :]
+            )
+            .float()
+            .to(device)
+        )
+        .detach()
+        .cpu()
+        .numpy()[0, 1]
+        > threshold
+        for args in tqdm(image_args)
+    ]
+    image_args = [args for i, args in enumerate(image_args) if not discard_mask[i]]
+
     # Generate counterfactuals
-    parallel = True if num_workers > 1 else False
-    if parallel:
-        from dask import delayed
-        import dask.multiprocessing
+    if num_workers > 1:
+        pool = multiprocessing.Pool()
 
-        @delayed
-        def generate_one_cf_delayed(args):
-            return generate_one_cf(*args)
+        # Check the number of worker processes
+        num_workers = pool._processes
+        print(f"Number of worker processes: {num_workers}")
 
-        dask_tasks = [generate_one_cf_delayed(args) for args in image_args]
-        _ = dask.compute(*dask_tasks, scheduler="processes", num_workers=num_workers)
+        result = list(
+            tqdm(
+                pool.imap(
+                    generate_one_cf_wrapper,
+                    [{**args, **general_args} for args in image_args],
+                ),
+                total=len(image_args),
+            )
+        )
+        pool.close()
+        pool.join()
     else:
-        for args in tqdm(image_args, total=num_images):
+        for args in tqdm(image_args, total=len(image_args)):
             generate_one_cf(**{**args, **general_args})
+
+
+def generate_one_cf_wrapper(combined_args):
+    # set number of threads to 1
+    torch.set_num_threads(1)
+
+    return generate_one_cf(**combined_args)
 
 
 def generate_one_cf(
@@ -154,7 +184,7 @@ def generate_one_cf(
     mu: np.ndarray,
     stdev: np.ndarray,
     kdtree_path: str,
-    verbose: bool = False,
+    verbosity: int = 0,
     optimization_params: dict = None,
     save_dir: str = None,
     threshold: float = 0.5,
@@ -224,24 +254,27 @@ def generate_one_cf(
     # define predict function
     predict_fn = lambda x: altered_model(x)
 
-    # Terminate if model incorrectly classifies patch as the target class
-    orig_proba = predict_fn(X_mean[None, :]).detach().cpu().numpy()
-    if verbose:
-        print(f"Initial probability: {orig_proba}")
-    pred = orig_proba[0, 1] > threshold
-    if pred == target_class:
-        print("Instance already classified as target class, no counterfactual needed")
-        return
+    # # Terminate if model incorrectly classifies patch as the target class
+    # orig_proba = predict_fn(X_mean[None, :]).detach().cpu().numpy()
+    # if verbosity > 1:
+    #     print(f"Initial probability: {orig_proba}")
+    # pred = orig_proba[0, 1] > threshold
+    # if pred == target_class:
+    #     if verbosity > 0:
+    #         print(
+    #             "Instance already classified as target class, no counterfactual needed"
+    #         )
+    #     return
 
     # define counterfactual object
-    shape = (1,) + original_patch.shape
+    shape = (1,) + X_mean.shape
     cf = Counterfactual(
         predict_fn,
         input_transform,
         shape,
         feature_range=feature_range,
         trustscore=kdtree_path,
-        verbose=verbose,
+        verbosity=verbosity,
         device=device,
         **optimization_params,
     )
@@ -253,19 +286,14 @@ def generate_one_cf(
     )
 
     if explanation.cf is not None:
-        cf_prob = explanation.cf["proba"][0]
+        if verbosity > 0:
+            cf_prob = explanation.cf["proba"][0]
+            print(f"Counterfactual probability: {cf_prob}")
+
         cf = explanation.cf["X"][0]
-        proba = explanation.cf["proba"][0]
-
-        # manually compute probability of cf
         cf = input_transform(torch.from_numpy(cf[None, :]).to(device))
-        # counterfactual_probabilities = (
-        # altered_model(cf) if model.arch == "mlp" else model(cf)
-        # )
-        if model.arch != "mlp":
-            cf = torch.permute(cf, (0, 2, 3, 1))
+        cf = torch.permute(cf, (0, 2, 3, 1))
 
-        print(f"Counterfactual probability: {proba}")
         X_perturbed = mean_preserve_dimensions(
             cf * stdev + mu, preserveAxis=cf.ndim - 1
         )
@@ -277,7 +305,8 @@ def generate_one_cf(
                 cf_delta[is_perturbed].cpu().numpy(),
             )
         )
-        print(f"cf perturbed: {cf_perturbed}")
+        if verbosity > 0:
+            print(f"cf perturbed: {cf_perturbed}")
 
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
@@ -288,7 +317,7 @@ def generate_one_cf(
                 cf_perturbed=cf_perturbed,
                 channel_to_perturb=np.array(channel)[is_perturbed],
             )
-    return explanation
+        return cf_perturbed
 
 
 def build_kdtree(

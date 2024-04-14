@@ -4,7 +4,6 @@ import torchmetrics.functional.classification as tf_classifier
 from torch import nn
 from torch.nn import functional
 
-
 class PatchClassifier(light.LightningModule):
     def __init__(
         self,
@@ -130,7 +129,6 @@ def load_model(model_path: str, eval: bool = True):
     Returns:
         torch.nn.Module: Loaded model.
     """
-    from ..classification import PatchClassifier
 
     model = PatchClassifier.load_from_checkpoint(
         model_path,

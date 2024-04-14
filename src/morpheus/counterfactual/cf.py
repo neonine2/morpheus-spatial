@@ -13,10 +13,8 @@ from ..api.defaults import DEFAULT_DATA, DEFAULT_META
 from ..api.interfaces import Explainer, Explanation, FitMixin
 from ..utils.gradients import perturb
 
-from lightning.pytorch import seed_everything
-
-seed_everything(42)
-# torch.set_default_dtype(torch.float64)
+# from lightning.pytorch import seed_everything
+# seed_everything(42)
 
 
 class Counterfactual(Explainer, FitMixin):
@@ -44,7 +42,7 @@ class Counterfactual(Explainer, FitMixin):
         clip: tuple = (-1000.0, 1000.0),
         update_num_grad: int = 1,
         trustscore: Optional[str] = None,
-        verbose: bool = False,
+        verbosity: int = 0,
         numerical_diff: bool = True,
         device: str = None,
     ) -> None:
@@ -99,12 +97,6 @@ class Counterfactual(Explainer, FitMixin):
         """
         super().__init__(meta=copy.deepcopy(DEFAULT_META))
 
-        # if image as input
-        if len(shape) > 2:
-            patch_shape = shape[1:]  # should be [x length, y length, and channels]
-            shape = (shape[0], shape[-1])
-        else:
-            patch_shape = shape
         params = locals()
         remove = [
             "self",
@@ -159,7 +151,6 @@ class Counterfactual(Explainer, FitMixin):
         self.meta["params"].update(enc_or_kdtree=self.enc_or_kdtree)
 
         self.shape = shape
-        self.patch_shape = patch_shape
         self.kappa = kappa
         self.beta = beta
         self.gamma = gamma
@@ -186,7 +177,7 @@ class Counterfactual(Explainer, FitMixin):
         self.clip = clip
         self.input_transform = input_transform
         self.learning_rate_init = learning_rate_init
-        self.verbose = verbose
+        self.verbosity = verbosity
 
         # variable for target class proto
         if self.enc_model:
@@ -563,10 +554,10 @@ class Counterfactual(Explainer, FitMixin):
             predicted class for the original instance over the distance to the prototype of the predicted class
             for the counterfactual. If the trust score is below the threshold, the proposed counterfactual does
             not meet the requirements.
-        verbose
-            Print intermediate results of optimization if ``True``.
+        verbosity
+            Print intermediate results of optimization if greater than 1.
         print_every
-            Print frequency if verbose is ``True``.
+            Print frequency if verbose is greater than 1.
         log_every
             `tensorboard` log frequency if write directory is specified.
 
@@ -604,7 +595,7 @@ class Counterfactual(Explainer, FitMixin):
         if target_class is None:
             target_class = list(range(self.classes))
             target_class.remove(np.argmax(Y, axis=1))
-            if self.verbose:
+            if self.verbosity > 1:
                 print("Predicted class: {}".format(np.argmax(Y, axis=1)))
                 print("Target classes: {}".format(target_class))
         X_num = X
@@ -648,7 +639,7 @@ class Counterfactual(Explainer, FitMixin):
         if self.enc_or_kdtree:
             self.id_proto = min(dist_proto, key=dist_proto.get)
             proto_val = self.class_proto[self.id_proto].to(self.device)
-            if self.verbose:
+            if self.verbosity > 1:
                 print("Prototype class: {}".format(self.id_proto))
         else:  # no prototype loss term used
             torch.zeros(self.shape_enc)
@@ -766,7 +757,7 @@ class Counterfactual(Explainer, FitMixin):
                 self.compute_combined_loss()
 
                 with torch.no_grad():
-                    if self.verbose and i % print_every == 0:
+                    if self.verbosity > 1 and i % print_every == 0:
 
                         target_proba = torch.sum(self.pred_proba * Y)
                         nontarget_proba_max = torch.max((1 - Y) * self.pred_proba)
@@ -846,7 +837,7 @@ class Counterfactual(Explainer, FitMixin):
                             and above_threshold
                             and adv_class in target_class
                         ):
-                            if self.verbose:
+                            if self.verbosity > 1:
                                 print("\nNew best counterfactual found!")
                             overall_best_dist[batch_idx] = dist
                             overall_best_attack[batch_idx] = adv_idx
@@ -926,10 +917,10 @@ class Counterfactual(Explainer, FitMixin):
             predicted class for the original instance over the distance to the prototype of the predicted class
             for the counterfactual. If the trust score is below the threshold, the proposed counterfactual does
             not meet the requirements.
-        verbose
-            Print intermediate results of optimization if ``True``.
+        verbosity
+            Print intermediate results of optimization if greater than 1.
         print_every
-            Print frequency if verbose is ``True``.
+            Print frequency if verbosity is greater than 1.
         log_every
             `tensorboard` log frequency if write directory is specified
 
@@ -976,7 +967,8 @@ class Counterfactual(Explainer, FitMixin):
 
         # add to explanation dict
         if not self.best_attack:
-            warnings.warn("No counterfactual found!")
+            if self.verbosity > 0:
+                warnings.warn("No counterfactual found!")
 
             # create explanation object
             explanation = Explanation(meta=copy.deepcopy(self.meta), data=data)
