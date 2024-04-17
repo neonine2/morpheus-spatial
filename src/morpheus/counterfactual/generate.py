@@ -9,7 +9,6 @@ import multiprocessing
 
 from tqdm import tqdm
 
-from ..classification import load_model
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
 from ..confidence import TrustScore
@@ -142,6 +141,18 @@ def get_counterfactual(
     ]
     image_args = [args for i, args in enumerate(image_args) if not discard_mask[i]]
 
+    # Save hyperparameters
+    with open(os.path.join(save_dir, "hyperparameters.json"), "w") as json_file:
+        json.dump(
+            {
+                "target_class": target_class,
+                "channel_to_perturb": channel_to_perturb,
+                "optimization_params": optimization_params,
+                "threshold": threshold,
+            },
+            json_file,
+        )
+
     # Generate counterfactuals
     if num_workers > 1:
         pool = multiprocessing.Pool()
@@ -150,7 +161,7 @@ def get_counterfactual(
         num_workers = pool._processes
         print(f"Number of worker processes: {num_workers}")
 
-        result = list(
+        _ = list(
             tqdm(
                 pool.imap(
                     generate_one_cf_wrapper,
@@ -254,18 +265,6 @@ def generate_one_cf(
     # define predict function
     predict_fn = lambda x: altered_model(x)
 
-    # # Terminate if model incorrectly classifies patch as the target class
-    # orig_proba = predict_fn(X_mean[None, :]).detach().cpu().numpy()
-    # if verbosity > 1:
-    #     print(f"Initial probability: {orig_proba}")
-    # pred = orig_proba[0, 1] > threshold
-    # if pred == target_class:
-    #     if verbosity > 0:
-    #         print(
-    #             "Instance already classified as target class, no counterfactual needed"
-    #         )
-    #     return
-
     # define counterfactual object
     shape = (1,) + X_mean.shape
     cf = Counterfactual(
@@ -286,8 +285,8 @@ def generate_one_cf(
     )
 
     if explanation.cf is not None:
+        cf_prob = explanation.cf["proba"][0]
         if verbosity > 0:
-            cf_prob = explanation.cf["proba"][0]
             print(f"Counterfactual probability: {cf_prob}")
 
         cf = explanation.cf["X"][0]
@@ -299,25 +298,25 @@ def generate_one_cf(
         )
         original_patch = X_mean * stdev + mu
         cf_delta = (X_perturbed - original_patch) / original_patch * 100
-        cf_perturbed = dict(
+        percent_delta = dict(
             zip(
                 np.array(channel)[is_perturbed],
                 cf_delta[is_perturbed].cpu().numpy(),
             )
         )
         if verbosity > 0:
-            print(f"cf perturbed: {cf_perturbed}")
+            print(f"cf perturbed (%): {percent_delta}")
 
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
             saved_file = os.path.join(save_dir, f"patch_{patch_id}.npz")
             np.savez(
                 saved_file,
-                explanation=explanation,
-                cf_perturbed=cf_perturbed,
-                channel_to_perturb=np.array(channel)[is_perturbed],
+                cf=X_perturbed,
+                proba=cf_prob,
+                delta_in_percentage=percent_delta,
             )
-        return cf_perturbed
+        return percent_delta
 
 
 def build_kdtree(

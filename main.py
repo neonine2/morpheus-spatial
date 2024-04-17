@@ -1,7 +1,11 @@
+import os
 from lightning.pytorch import seed_everything
 
+# sets seed for pseudo-random number generators in: pytorch, numpy, python.random
 seed_everything(42)
+
 import morpheus as mp
+
 
 data_path = "/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/temp/singlecell.csv"  # change to your own directory
 dataset = mp.SpatialDataset(input_path=data_path)
@@ -81,9 +85,10 @@ optimization_param = {
     "kappa": (threshold - 0.5) * 2,
     "learning_rate_init": 0.1,
     "beta": 1.0,
-    "max_iterations": 1000,  # set to >1000 for better performance
+    "max_iterations": 1000,
     "c_init": 1000.0,
     "c_steps": 5,
+    "numerical_diff": True,
 }
 
 # load model
@@ -99,7 +104,7 @@ cf = mp.get_counterfactual(
     channel_to_perturb=channel_to_perturb,
     optimization_params=optimization_param,
     threshold=threshold,
-    save_dir=f"{dataset.root_dir}/cf/",
+    save_dir=f"{dataset.root_dir}/cf/test/",
     device="cpu",
-    num_workers=64,
+    num_workers=os.cpu_count() - 1,
 )

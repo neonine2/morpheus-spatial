@@ -1,4 +1,3 @@
-import os
 import copy
 import sys
 import _pickle as pickle
@@ -12,10 +11,6 @@ import torch.optim as optim
 from ..api.defaults import DEFAULT_DATA, DEFAULT_META
 from ..api.interfaces import Explainer, Explanation, FitMixin
 from ..utils.gradients import perturb
-
-# from lightning.pytorch import seed_everything
-# seed_everything(42)
-
 
 class Counterfactual(Explainer, FitMixin):
     def __init__(

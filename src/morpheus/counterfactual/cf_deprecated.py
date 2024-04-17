@@ -50,6 +50,7 @@ class Counterfactual(Explainer, FitMixin):
         sess: Optional[tf.Session] = None,
         verbose: bool = False,
         device: str = "cpu",
+        verbosity: int = 0,
     ) -> None:
         """
         Initialize prototypical counterfactual method.
