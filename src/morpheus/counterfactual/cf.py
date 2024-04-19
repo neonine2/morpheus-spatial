@@ -12,6 +12,7 @@ from ..api.defaults import DEFAULT_DATA, DEFAULT_META
 from ..api.interfaces import Explainer, Explanation, FitMixin
 from ..utils.gradients import perturb
 
+
 class Counterfactual(Explainer, FitMixin):
     def __init__(
         self,
@@ -307,23 +308,15 @@ class Counterfactual(Explainer, FitMixin):
             self.loss_proto = torch.tensor(0.0)
             self.loss_proto_s = torch.tensor(0.0)
 
-    def compute_combined_loss(self):
+    def compute_regularizer_loss(self):
 
         # Computer each loss term
-        self.compute_attack_loss()
         self.compute_l1_l2_losses(self.shape)
         self.compute_autoencoder_loss()
         self.compute_prototype_loss()
 
-        """Compute the combined loss."""
-        if (
-            self.numerical_diff
-        ):  # separate numerical computation of loss attack gradient
-            self.loss_opt = self.loss_l2_s + self.loss_ae_s + self.loss_proto_s
-        else:
-            self.loss_opt = (
-                self.loss_attack_s + self.loss_l2_s + self.loss_ae_s + self.loss_proto_s
-            )
+        """Compute the regularization loss."""
+        self.loss_reg = self.loss_l2_s + self.loss_ae_s + self.loss_proto_s
 
         # add L1 term to overall loss; this is not the loss that will be directly optimized
         self.loss_total = (
@@ -681,7 +674,8 @@ class Counterfactual(Explainer, FitMixin):
             self.optimizer.zero_grad()
 
             # Compute the forward loss
-            self.compute_combined_loss()
+            self.compute_attack_loss()
+            self.compute_regularizer_loss()
 
             for i in range(self.max_iterations):
 
@@ -719,13 +713,17 @@ class Counterfactual(Explainer, FitMixin):
                         grads_num = np.clip(grads_num, self.clip[0], self.clip[1])  # type: ignore
                         grads_num_s = np.clip(grads_num_s, self.clip[0], self.clip[1])  # type: ignore
                         X_der_batch, X_der_batch_s = [], []
+                elif not self.numerical_diff:
+                    self.loss_attack_s.backward()
+                    with torch.no_grad():
+                        self.adv_s.grad.clamp_(self.clip[0], self.clip[1])
 
-                # Compute gradients in backward pass
-                self.loss_opt.backward()
-
-                # Clip the gradients
+                self.loss_reg.backward(retain_graph=True)
                 with torch.no_grad():
-                    self.adv_s.grad.clamp_(self.clip[0], self.clip[1])
+                    if self.numerical_diff:
+                        self.adv_s.grad.clamp_(self.clip[0], self.clip[1])
+                    else:
+                        self.adv_s.grad.clamp_(self.clip[0] * 2, self.clip[1] * 2)
                     self.adv_s.grad.add_(torch.from_numpy(grads_num_s))
                     gradients = self.adv_s.grad
 
@@ -749,7 +747,8 @@ class Counterfactual(Explainer, FitMixin):
                 # L1+L2 and prediction probabilities used to see if adv is better than the current best adv under FISTA
                 self.optimizer.zero_grad()
 
-                self.compute_combined_loss()
+                self.compute_attack_loss()
+                self.compute_regularizer_loss()
 
                 with torch.no_grad():
                     if self.verbosity > 1 and i % print_every == 0:

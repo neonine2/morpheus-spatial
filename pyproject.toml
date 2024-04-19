@@ -16,6 +16,7 @@ dill = "^0.3.8"
 scikit-learn = "^1.4.1.post1"
 torch = "2.0.0"
 tensorflow = "2.11.1"
+ray = {version = "^2.11.0", optional = true, markers = "extra == 'ray'"}
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.1.0"
@@ -26,3 +27,6 @@ ipykernel = "^6.29.3"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.extras]
+ray = ["ray"]

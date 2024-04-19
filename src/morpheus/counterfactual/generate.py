@@ -7,10 +7,12 @@ from typing import Optional
 import torch
 import multiprocessing
 
+import ray
 from tqdm import tqdm
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
+from ..classification import load_model
 from ..confidence import TrustScore
 from ..configuration import (
     Splits,
@@ -25,7 +27,7 @@ EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 def get_counterfactual(
     dataset: SpatialDataset,
     target_class: int,
-    model: torch.nn.Module,
+    model_path: str,
     channel_to_perturb: list,
     optimization_params: dict,
     images: pd.DataFrame = None,
@@ -84,6 +86,7 @@ def get_counterfactual(
     os.makedirs(save_dir, exist_ok=True)
 
     # Build kdtree if it does not exist
+    model = load_model(model_path)
     if not os.path.exists(kdtree_path):
         build_kdtree(kdtree_path, train_data, model, mu, stdev, trustscore_kwargs)
         print("kdtree saved")
@@ -93,7 +96,7 @@ def get_counterfactual(
     # used across all images
     general_args = {
         "target_class": target_class,
-        "model": model,
+        "model_path": model_path,
         "channel": dataset.channel_names,
         "channel_to_perturb": channel_to_perturb,
         "mu": mu,
@@ -155,32 +158,57 @@ def get_counterfactual(
 
     # Generate counterfactuals
     if num_workers > 1:
-        pool = multiprocessing.Pool()
+        # Initialize Ray
+        ray.shutdown()
+        ray.init()
+
+        # Get the number of available CPUs
+        num_cpus = ray.available_resources()["CPU"]
+        print(f"Number of available CPUs: {num_cpus}")
+
+        # Create a list of Ray object references
+        cf_refs = [
+            generate_one_cf_wrapper.remote({**args, **general_args})
+            for args in image_args
+        ]
+
+        # Use tqdm to display a progress bar
+        with tqdm(total=len(image_args)) as pbar:
+            # Retrieve the results as they become available
+            results = []
+            while cf_refs:
+                done_refs, cf_refs = ray.wait(cf_refs)
+                results.extend(ray.get(done_refs))
+                pbar.update(len(done_refs))
+
+        # Shutdown Ray
+        ray.shutdown()
+
+        # pool = multiprocessing.Pool(num_workers)
 
         # Check the number of worker processes
-        num_workers = pool._processes
-        print(f"Number of worker processes: {num_workers}")
+        # num_workers = pool._processes
+        # print(f"Number of worker processes: {num_workers}")
 
-        _ = list(
-            tqdm(
-                pool.imap(
-                    generate_one_cf_wrapper,
-                    [{**args, **general_args} for args in image_args],
-                ),
-                total=len(image_args),
-            )
-        )
-        pool.close()
-        pool.join()
+        # _ = list(
+        #     tqdm(
+        #         pool.imap(
+        #             generate_one_cf_wrapper,
+        #             [{**args, **general_args} for args in image_args],
+        #         ),
+        #         total=len(image_args),
+        #     )
+        # )
+        # pool.close()
+        # pool.join()
     else:
         for args in tqdm(image_args, total=len(image_args)):
             generate_one_cf(**{**args, **general_args})
 
 
+@ray.remote
 def generate_one_cf_wrapper(combined_args):
-    # set number of threads to 1
-    torch.set_num_threads(1)
-
+    torch.set_num_threads(1)  # very important
     return generate_one_cf(**combined_args)
 
 
@@ -189,7 +217,7 @@ def generate_one_cf(
     original_class: np.ndarray,
     patch_id: int,
     target_class: int,
-    model: torch.nn.Module,
+    model_path: str,
     channel: list,
     channel_to_perturb: list,
     mu: np.ndarray,
@@ -219,6 +247,8 @@ def generate_one_cf(
      Returns:
          None
     """
+    # load model
+    model = load_model(model_path)
 
     # Obtain data features
     stdev, mu = (
@@ -226,7 +256,8 @@ def generate_one_cf(
         torch.tensor(mu).float(),
     )
     H, _, C = original_patch.shape
-    original_patch = (torch.from_numpy(original_patch).float().to(device) - mu) / stdev
+    original_patch = torch.from_numpy(original_patch.copy()).float().to(device)
+    original_patch = (original_patch - mu) / stdev
     original_class = torch.tensor([original_class], dtype=torch.int64)
     X_mean = torch.mean(original_patch, dim=(0, 1))
 

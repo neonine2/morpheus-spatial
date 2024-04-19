@@ -4,6 +4,7 @@ import torchmetrics.functional.classification as tf_classifier
 from torch import nn
 from torch.nn import functional
 
+
 class PatchClassifier(light.LightningModule):
     def __init__(
         self,
@@ -40,6 +41,7 @@ class PatchClassifier(light.LightningModule):
                 in_channels=in_channels,
                 out_channels=1,
                 init_features=in_channels,
+                verbose=False,
             )
             classifier = torch.nn.Sequential()
             classifier.add_module("flatten", nn.Flatten())

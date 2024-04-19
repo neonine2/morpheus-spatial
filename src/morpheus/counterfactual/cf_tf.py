@@ -51,6 +51,7 @@ class Counterfactual(Explainer, FitMixin):
         verbose: bool = False,
         device: str = "cpu",
         verbosity: int = 0,
+        numerical_diff: bool = False,
     ) -> None:
         """
         Initialize prototypical counterfactual method.
