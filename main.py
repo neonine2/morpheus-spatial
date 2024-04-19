@@ -80,7 +80,7 @@ def main(data_path):
         "theta": 40.0,
         "kappa": (threshold - 0.5) * 2,
         "learning_rate_init": 0.1,
-        "beta": 100.0,
+        "beta": 90.0,
         "max_iterations": 1000,
         "c_init": 1000.0,
         "c_steps": 5,
