@@ -108,4 +108,5 @@ def main(data_path):
 
 if __name__ == "__main__":
     data_path = "/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/temp/singlecell.csv"  # change to your own directory
+
     main(data_path)
