@@ -19,9 +19,9 @@ class CellType(Enum):
 
 
 class Splits(Enum):
-    test = "test"
     train = "train"
     validate = "validate"
+    test = "test"
 
 
 class DefaultFolderName(Enum):
@@ -34,3 +34,4 @@ class DefaultFileName(Enum):
     label = "label.csv"
     kdtree = "kdtree.pkl"
     patch = "patch.h5"
+    normalization = "normalization_params.json"

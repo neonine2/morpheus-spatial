@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 from typing import Optional
 import torch
-import multiprocessing
 
 import ray
 from tqdm import tqdm
@@ -25,12 +24,12 @@ EPSILON = torch.tensor(1e-20, dtype=torch.float32)
 
 
 def get_counterfactual(
+    images: pd.DataFrame,
     dataset: SpatialDataset,
     target_class: int,
     model_path: str,
     channel_to_perturb: list,
     optimization_params: dict,
-    images: pd.DataFrame = None,
     threshold: float = 0.5,
     kdtree_path: str = None,
     save_dir: str = None,
@@ -39,6 +38,7 @@ def get_counterfactual(
     verbosity: int = 0,
     trustscore_kwargs: Optional[dict] = None,
     device: str = None,
+    model_kwargs: Optional[dict] = {},
 ):
     """
     Generate counterfactuals for the dataset.
@@ -55,6 +55,10 @@ def get_counterfactual(
         save_dir (str, optional): Directory where output will be saved. Defaults to None.
         num_workers (bool, optional): Number of workers to use for parallel processing. Defaults to None.
         train_data (str, optional): Path to the training data. Defaults to None.
+        verbosity (int, optional): Verbosity level. Defaults to 0.
+        trustscore_kwargs (dict, optional): Dictionary containing the parameters for the trustscore. Defaults to None.
+        device (str, optional): Device to use for computation. Defaults to None.
+        model_kwargs (dict, optional): Additional keyword arguments for the model. Defaults to {}.
     """
 
     # set default tensor type to cuda if available
@@ -64,7 +68,7 @@ def get_counterfactual(
 
     # Load normalization parameters
     with open(
-        os.path.join(dataset.split_dir, "normalization_params.json")
+        os.path.join(dataset.split_dir, DefaultFileName.normalization.value)
     ) as json_file:
         normalization_params = json.load(json_file)
         mu = normalization_params["mean"]
@@ -86,7 +90,7 @@ def get_counterfactual(
     os.makedirs(save_dir, exist_ok=True)
 
     # Build kdtree if it does not exist
-    model = load_model(model_path)
+    model = load_model(model_path, **model_kwargs).to(device)
     if not os.path.exists(kdtree_path):
         build_kdtree(kdtree_path, train_data, model, mu, stdev, trustscore_kwargs)
         print("kdtree saved")
@@ -107,6 +111,7 @@ def get_counterfactual(
         "save_dir": save_dir,
         "threshold": threshold,
         "device": device,
+        "model_kwargs": model_kwargs,
     }
 
     # specific to each image
@@ -183,24 +188,6 @@ def get_counterfactual(
 
         # Shutdown Ray
         ray.shutdown()
-
-        # pool = multiprocessing.Pool(num_workers)
-
-        # Check the number of worker processes
-        # num_workers = pool._processes
-        # print(f"Number of worker processes: {num_workers}")
-
-        # _ = list(
-        #     tqdm(
-        #         pool.imap(
-        #             generate_one_cf_wrapper,
-        #             [{**args, **general_args} for args in image_args],
-        #         ),
-        #         total=len(image_args),
-        #     )
-        # )
-        # pool.close()
-        # pool.join()
     else:
         for args in tqdm(image_args, total=len(image_args)):
             generate_one_cf(**{**args, **general_args})
@@ -228,6 +215,7 @@ def generate_one_cf(
     save_dir: str = None,
     threshold: float = 0.5,
     device: str = None,
+    model_kwargs: Optional[dict] = {},
 ) -> None:
     """
     Generate counterfactuals for a given image patch.
@@ -243,12 +231,14 @@ def generate_one_cf(
          save_dir (str, optional): Directory where output will be saved. Defaults to None.
          patch_id (int, optional): Patch ID. Defaults to None.
          threshold (float, optional): Threshold for the prediction probability. Defaults to 0.5.
+         device (str, optional): Device to use for computation. Defaults to None.
+         model_kwargs (dict, optional): Additional keyword arguments for the model. Defaults to {}.
 
      Returns:
          None
     """
     # load model
-    model = load_model(model_path)
+    model = load_model(model_path, **model_kwargs).to(device)
 
     # Obtain data features
     stdev, mu = (
@@ -269,18 +259,18 @@ def generate_one_cf(
         stdev = stdev.cuda()
         mu = mu.cuda()
 
-    if model.arch == "mlp":
-        original_patch = X_mean
+    # if model.arch == "mlp":
+    #     original_patch = X_mean
 
     # Adding init layer to model
     unnormed_mean = X_mean * stdev + mu
-    if model.arch == "mlp":
-        altered_model = lambda x: torch.nn.functional.softmax(model(x), dim=1)
-        input_transform = lambda x: x
-    else:
-        unnormed_patch = original_patch[None, :] * stdev + mu
-        init_fun = lambda y: alter_image(y, unnormed_patch, mu, stdev, unnormed_mean)
-        altered_model, input_transform = add_init_layer(init_fun, model)
+    # if model.arch == "mlp":
+    #     altered_model = lambda x: torch.nn.functional.softmax(model(x), dim=1)
+    #     input_transform = lambda x: x
+    # else:
+    unnormed_patch = original_patch[None, :] * stdev + mu
+    init_fun = lambda y: alter_image(y, unnormed_patch, mu, stdev, unnormed_mean)
+    altered_model, input_transform = add_init_layer(init_fun, model)
 
     # Set range of each channel to perturb
     is_perturbed = np.array(
@@ -362,10 +352,10 @@ def build_kdtree(
     train_patch = torch.from_numpy(
         (train_patch - np.array(mu)) / np.array(stdev)
     ).float()
-    if model.arch == "mlp":
-        X_t = torch.mean(train_patch, (1, 2))
-    else:
-        X_t = torch.permute(train_patch, (0, 3, 1, 2))
+    # if model.arch == "mlp":
+    #     X_t = torch.mean(train_patch, (1, 2))
+    # else:
+    X_t = torch.permute(train_patch, (0, 3, 1, 2))
 
     model_out = model(X_t).detach().numpy()
     preds = np.argmax(model_out, axis=1)

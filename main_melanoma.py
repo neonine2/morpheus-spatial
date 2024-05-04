@@ -32,20 +32,6 @@ def main(data_path):
     model_arch = "unet"
     n_channels = dataset.n_channels
     img_size = dataset.img_size
-    # model = mp.PatchClassifier(n_channels, img_size, model_arch)
-
-    # # train model
-    # trainer_params = {
-    #     "max_epochs": 100,  # set to >60 for better performance
-    #     "accelerator": "auto",
-    #     "logger": False,
-    # }
-    # model = mp.train(
-    #     model=model,
-    #     dataset=dataset,
-    #     label_name=colname,
-    #     trainer_params=trainer_params,
-    # )
 
     # images to generate counterfactuals
     dataset.get_split_info()
@@ -57,21 +43,17 @@ def main(data_path):
 
     # channels allowed to be perturbed
     channel_to_perturb = [
-        "Glnsynthetase",
-        "CCR4",
-        "PDL1",
-        "LAG3",
-        "CD105endoglin",
-        "TIM3",
-        "CXCR4",
-        "PD1",
-        "CYR61",
-        "CD44",
-        "IL10",
-        "CXCL12",
-        "CXCR3",
-        "Galectin9",
-        "YAP",
+        "CCL4_mRNA",
+        "CCL18_mRNA",
+        "CXCL8_mRNA",
+        "CXCL10_mRNA",
+        "CXCL12_mRNA",
+        "CXCL13_mRNA",
+        "CCL2_mRNA",
+        "CCL22_mRNA",
+        "CXCL9_mRNA",
+        "CCL8_mRNA",
+        "CCL19_mRNA",
     ]
 
     # probability cutoff for classification
@@ -80,12 +62,12 @@ def main(data_path):
     # optimization parameters
     optimization_param = {
         "use_kdtree": True,
-        "theta": 40.0,
-        "kappa": -0.2,
+        "theta": 60.0,
+        "kappa": -0.9,
         "learning_rate_init": 0.1,
-        "beta": 70.0,
+        "beta": 2.0,
         "max_iterations": 1000,
-        "c_init": 10000.0,
+        "c_init": 80000.0,
         "c_steps": 5,
         "numerical_diff": False,
     }
@@ -98,11 +80,11 @@ def main(data_path):
         images=select_metadata,
         dataset=dataset,
         target_class=1,
-        model_path="/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/model/unet_mod/lightning_logs/version_0/checkpoints/epoch=27-step=9744.ckpt",
+        model_path="/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/model/unet/lightning_logs/version_1/checkpoints/epoch=21-step=7106.ckpt",
         channel_to_perturb=channel_to_perturb,
         optimization_params=optimization_param,
         threshold=threshold,
-        save_dir=f"{dataset.root_dir}/cf/beta70_auto/",
+        save_dir=f"{dataset.root_dir}/cf/c80000/",
         device="cpu",
         num_workers=os.cpu_count() - 1,
         verbosity=0,
@@ -111,5 +93,5 @@ def main(data_path):
 
 
 if __name__ == "__main__":
-    data_path = "/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/replicate/singlecell.csv"  # change to your own directory
+    data_path = "/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/replicate/singlecell.csv"  # change to your own directory
     main(data_path)

@@ -5,6 +5,8 @@ import warnings
 import h5py
 import numpy as np
 import pandas as pd
+import ray
+from tqdm import tqdm
 
 from ..utils.patchify import generate_patches_optimized
 from ..configuration.Types import (
@@ -20,9 +22,10 @@ class SpatialDataset:
         self,
         input_path: str,
         channel_names: list = [],
+        additional_cols: list = [],
         patch_path: str = None,
         split_dir: str = None,
-        model_dir: str = None,
+        model_path: str = None,
         cf_dir: str = None,
     ):
         self.data_dim = None
@@ -30,13 +33,14 @@ class SpatialDataset:
         self.input_path = input_path
         self.root_dir = os.path.dirname(input_path)
 
-        data = self.load_input_csv()
-        self.check_input_csv(data, channel_names)  # also sets self.channel_names
+        self.load_input_csv(
+            channel_names, additional_cols, check_only=True
+        )  # also sets self.channel_names
 
         # set the directories where different outputs are saved
         self.patch_path = self.set_patch_path(patch_path)
         self.split_dir = self.set_split_dir(split_dir)
-        self.model_dir = self.set_model_dir(model_dir)
+        self.model_path = self.set_model_path(model_path)
         self.cf_dir = self.set_counterfactual_dir(cf_dir)
 
         if self.patch_path is not None:
@@ -47,13 +51,31 @@ class SpatialDataset:
         if self.split_dir is not None and self.patch_path is not None:
             self.get_split_info()
 
+        # display all the directories set
+        print(f"Input path: {self.input_path}")
+        print(f"Patch path: {self.patch_path}")
+        print(f"Split directory: {self.split_dir}")
+        print(f"Model path: {self.model_path}")
+        print(f"Counterfactual directory: {self.cf_dir}")
+
     def get_split_info(self):
         for split in Splits:
             self.metadata.loc[self.get_split_ids(split.value), ColName.splits.value] = (
                 split.value
             )
 
-    def check_input_csv(self, input_csv: pd.DataFrame, channel_names: list):
+    def load_input_csv(
+        self, channel_names: list = [], additional_cols: list = [], check_only=False
+    ):
+        try:
+            input_csv = pd.read_csv(self.input_path, low_memory=False)
+        except Exception as e:
+            print(f"Error loading input CSV: {e}")
+
+        # check that the input CSV is not empty
+        if input_csv.empty:
+            raise ValueError("Input CSV is empty")
+
         # check the input CSV contains the required columns
         required_cols = [
             ColName.patient_id.value,
@@ -62,12 +84,16 @@ class SpatialDataset:
             ColName.cell_x.value,
             ColName.cell_y.value,
         ]
-        if len(channel_names) == 0:
+        if len(channel_names) == 0:  # should only be done during dataset initialization
             channel_names = [
-                col for col in input_csv.columns if col not in required_cols
+                col
+                for col in input_csv.columns
+                if col not in required_cols + additional_cols
             ]
-            print(f"Channel names inferred from input CSV: {channel_names}")
-        required_cols += channel_names
+            print(
+                f"{len(channel_names)} channels inferred from input CSV: {channel_names}"
+            )
+        required_cols += channel_names + additional_cols
 
         for col in required_cols:
             if col not in input_csv.columns:
@@ -76,14 +102,11 @@ class SpatialDataset:
         # reorder the channel names to match the order in the input CSV
         self.channel_names = [col for col in input_csv.columns if col in channel_names]
 
-        # check that the input CSV is not empty
-        if input_csv.empty:
-            raise ValueError("Input CSV is empty")
-        return
-
-    def load_input_csv(self):
-        data = pd.read_csv(self.input_path)
-        return data
+        if check_only:
+            return
+        else:
+            # reorder columns in the input CSV
+            return input_csv[required_cols]
 
     def generate_masked_patch(
         self,
@@ -116,9 +139,9 @@ class SpatialDataset:
                 else os.path.join(self.root_dir, DefaultFileName.patch.value)
             )
             if os.path.isfile(self.patch_path):
-                print(f"File {self.patch_path} already exists, not saving patches")
                 self.load_patch_data()
                 self.check_loaded_patch()
+                print(f"File {self.patch_path} already exists, existing file loaded")
                 return
 
         # print out details about the patches
@@ -128,15 +151,16 @@ class SpatialDataset:
         print(f"Cell types masked: {cell_to_mask}")
 
         # load the input data
-        df = self.load_input_csv()
+        df = self.load_input_csv(channel_names=self.channel_names)
 
         # generate the patches
         patches_array, metadata_df = generate_patches_optimized(
             df, patch_size, pixel_size, cell_types, self.channel_names, cell_to_mask
         )
-        metadata_df = metadata_df.reset_index().rename(
-            columns={"index": ColName.patch_id.value}
+        metadata_df = SpatialDataset.convert_object_columns(
+            metadata_df.reset_index().rename(columns={"index": ColName.patch_id.value})
         )
+        self.metadata = metadata_df
         n, h, w, c = patches_array.shape
 
         # check number of channel names matches the number of channels in the data
@@ -162,18 +186,18 @@ class SpatialDataset:
                     dtype=patches_array.dtype,
                 )
 
+                # Create a dataset to store the channel names
+                f.create_dataset("channel_names", data=self.channel_names)
+
                 # Create a dataset to store the metadata
                 metadata_numpy = metadata_df.to_records(index=False)
                 f.create_dataset(
                     "metadata", data=metadata_numpy, dtype=metadata_numpy.dtype
                 )
-
-                # Create a dataset to store the channel names
-                f.create_dataset("channel_names", data=self.channel_names)
             print(f"Patches saved to {self.patch_path}")
             self.load_patch_data()
             self.check_loaded_patch()
-        return
+        return metadata_df
 
     def set_patch_path(self, patch_path: str = None):
         path = (
@@ -191,13 +215,19 @@ class SpatialDataset:
         )
         return dir if os.path.isdir(dir) else None
 
-    def set_model_dir(self, model_dir: str = None):
-        dir = (
-            model_dir
-            if model_dir is not None
-            else os.path.join(self.root_dir, DefaultFolderName.model.value)
-        )
-        return dir if os.path.isdir(dir) else None
+    def set_model_path(self, model_path: str = None):
+        if model_path is not None:
+            if os.path.isfile(model_path):
+                return model_path
+            else:
+                raise ValueError(f"Model file not found at {model_path}")
+        else:
+            model_dir = os.path.join(self.root_dir, DefaultFolderName.model.value)
+            # look into model_dir (and possible subdirectories) for the first model file
+            for root, _, files in os.walk(model_dir):
+                for file in files:
+                    if file.endswith(".ckpt"):
+                        return os.path.join(root, file)
 
     def set_counterfactual_dir(self, cf_dir: str = None):
         dir = (
@@ -241,6 +271,12 @@ class SpatialDataset:
         except Exception as e:
             print(f"Error loading data: {e}")
 
+        # if patient id is string, decode it with utf-8
+        if self.metadata[ColName.patient_id.value].dtype == object:
+            self.metadata[ColName.patient_id.value] = self.metadata[
+                ColName.patient_id.value
+            ].str.decode("utf-8")
+
     def get_split_ids(self, split_name: str):
         label_path = os.path.join(
             self.split_dir, split_name, DefaultFileName.label.value
@@ -260,7 +296,7 @@ class SpatialDataset:
         random_state=None,
         shuffle=True,
         tolerance=None,
-        given_splits=None,
+        given_split: list = None,
         save=True,
     ):
         """
@@ -289,6 +325,8 @@ class SpatialDataset:
                 The lower bound for the proportion of the train split
             - n_tol: int
                 The number of attempts to generate a valid data split
+        given_split: list
+            A list of patient IDs to use for the train, validation, and test splits (in this order)
         save: bool
             Whether to save the data splits to the save directory
         """
@@ -308,11 +346,14 @@ class SpatialDataset:
             return
 
         print("Generating data splits...")
-        if given_splits is not None:
-            patient_split = {
-                name.value: np.array(given_splits[idx])
-                for idx, name in enumerate(Splits)
-            }
+        if given_split is not None:
+            if SpatialDataset.issplitvalid(given_split):
+                patient_split = {
+                    name.value: np.array(given_split[idx])
+                    for idx, name in enumerate(Splits)
+                }
+            else:
+                raise ValueError("Given split is not valid")
         else:
             patient_split = self.get_patient_splits(
                 stratify_by,
@@ -404,8 +445,6 @@ class SpatialDataset:
         pass
 
     def save_splits(self, patient_split, label_name=ColName.contains_cd8.value):
-        # import torch
-        from tqdm import tqdm
 
         # obtain patch index corresponding to patient split
         split_index = {
@@ -472,19 +511,36 @@ class SpatialDataset:
         with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
             json.dump(normalization_params, f)
 
-    def load_from_metadata(self, metadata):
+    def load_from_metadata(
+        self, metadata, col_as_label=ColName.contains_cd8.value, parallel=False
+    ):
         """
         Load all images with patch_ids in the list from the dataset.
         """
         # join the label column with the patch_id column to form the image path
-        image_paths = metadata[ColName.patch_id.value].apply(
+        image_paths = metadata.apply(
             lambda x: os.path.join(
                 self.split_dir,
-                f"{x[self.label_name]}/patch_{x[ColName.image_id.value]}.npy",
+                x[ColName.splits.value],
+                f"{int(x[col_as_label])}/patch_{x[ColName.patch_id.value]}.npy",
             ),
             axis=1,
         )
-        images = [self.load_single_image(path, id=False) for path in image_paths]
+        if parallel:
+            ray.shutdown()
+            ray.init()
+            # Launch tasks in parallel
+            futures = [parallel_load_image.remote(path) for path in image_paths]
+
+            # Retrieve results
+            images = []
+            for future in tqdm(
+                ray.get(futures), total=len(image_paths), desc="Loading Images"
+            ):
+                images.append(future)
+        else:
+            images = [self.load_single_image(path, id=False) for path in image_paths]
+        images = np.stack(images, axis=0)
         return images
 
     @staticmethod
@@ -510,3 +566,35 @@ class SpatialDataset:
     def generate_patch_path(self, patch_id, label, split):
         label = int(label)
         return os.path.join(self.split_dir, split, f"{label}/patch_{patch_id}.npy")
+
+    @staticmethod
+    def convert_object_columns(df):
+        for column in df.columns:
+            if df[column].dtype == object:
+                try:
+                    df[column] = df[column].astype(int)
+                except (ValueError, TypeError):
+                    df[column] = df[column].astype(
+                        h5py.string_dtype(encoding="utf-8", length=255)
+                    )
+        return df
+
+    @staticmethod
+    def issplitvalid(split):
+        # check that the given split is valid
+        if len(split) != 3:
+            raise ValueError(
+                "Given split should contain three lists of patient IDs for train, validation, and test splits"
+            )
+        if len(set(split[0]) & set(split[1])) > 0:
+            raise ValueError("Train and validation splits contain the same patient IDs")
+        if len(set(split[0]) & set(split[2])) > 0:
+            raise ValueError("Train and test splits contain the same patient IDs")
+        if len(set(split[1]) & set(split[2])) > 0:
+            raise ValueError("Validation and test splits contain the same patient IDs")
+        return True
+
+
+@ray.remote
+def parallel_load_image(path):
+    return SpatialDataset.load_single_image(path, id=False)

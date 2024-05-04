@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+from ..configuration.Types import ColName
 
 
 def generate_patches_optimized(
@@ -10,14 +11,17 @@ def generate_patches_optimized(
     num_channels = len(molecule_columns)
 
     # Get all combinations of image numbers and patient IDs in the DataFrame
-    all_image = df[["ImageNumber", "PatientID"]].drop_duplicates()
+    all_image = df[[ColName.image_id.value, ColName.patient_id.value]].drop_duplicates()
 
     patches = []
     metadata = []
 
     for _, image in all_image.iterrows():
         # Filter the DataFrame for the current image and patient
-        image_number, patient_id = image["ImageNumber"], image["PatientID"]
+        image_number, patient_id = (
+            image[ColName.image_id.value],
+            image[ColName.patient_id.value],
+        )
         image_df = filter_dataframe(df, image_number, patient_id)
 
         min_x, min_y, max_x, max_y = calculate_image_dimensions(image_df, pixel_size)
@@ -55,7 +59,7 @@ def generate_patches_optimized(
                 patch_metadata,
                 i,
                 image_df,
-                patch_cells[:, image_df.columns.get_loc("CellType")],
+                patch_cells[:, image_df.columns.get_loc(ColName.cell_type.value)],
                 cell_types,
             )
 
@@ -68,14 +72,17 @@ def generate_patches_optimized(
 
 
 def filter_dataframe(df, image_number, patient_id):
-    return df[(df["ImageNumber"] == image_number) & (df["PatientID"] == patient_id)]
+    return df[
+        (df[ColName.image_id.value] == image_number)
+        & (df[ColName.patient_id.value] == patient_id)
+    ]
 
 
 def calculate_image_dimensions(image_df, pixel_size):
-    min_x = int(image_df["Location_Center_X"].min() // pixel_size)
-    min_y = int(image_df["Location_Center_Y"].min() // pixel_size)
-    max_x = int(image_df["Location_Center_X"].max() // pixel_size) + 1
-    max_y = int(image_df["Location_Center_Y"].max() // pixel_size) + 1
+    min_x = int(image_df[ColName.cell_x.value].min() // pixel_size)
+    min_y = int(image_df[ColName.cell_y.value].min() // pixel_size)
+    max_x = int(image_df[ColName.cell_x.value].max() // pixel_size) + 1
+    max_y = int(image_df[ColName.cell_y.value].max() // pixel_size) + 1
     return min_x, min_y, max_x, max_y
 
 
@@ -100,8 +107,8 @@ def create_patch_indices(num_patches_x, num_patches_y):
 def create_patch_metadata(image_number, patient_id, patch_indices, cell_types):
     patch_metadata = pd.DataFrame(
         {
-            "ImageNumber": image_number,
-            "PatientID": patient_id,
+            ColName.image_id.value: image_number,
+            ColName.patient_id.value: patient_id,
             "PatchIndex_X": patch_indices[:, 0],
             "PatchIndex_Y": patch_indices[:, 1],
         }
@@ -113,7 +120,8 @@ def create_patch_metadata(image_number, patient_id, patch_indices, cell_types):
 
 def convert_to_numpy_array(image_df, molecule_columns):
     return image_df[
-        ["Location_Center_X", "Location_Center_Y", "CellType"] + molecule_columns
+        [ColName.cell_x.value, ColName.cell_y.value, ColName.cell_type.value]
+        + molecule_columns
     ].values
 
 

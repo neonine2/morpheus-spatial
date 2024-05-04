@@ -121,7 +121,7 @@ class PatchClassifier(light.LightningModule):
         return metric_dict
 
 
-def load_model(model_path: str, eval: bool = True):
+def load_model(model_path: str, eval: bool = True, **kwargs):
     """
     Load the trained model.
 
@@ -131,14 +131,7 @@ def load_model(model_path: str, eval: bool = True):
     Returns:
         torch.nn.Module: Loaded model.
     """
-
-    model = PatchClassifier.load_from_checkpoint(
-        model_path,
-        # in_channels=self.n_channels,
-        # img_size=self.img_size,
-        # arch=arch,
-    )
-
+    model = PatchClassifier.load_from_checkpoint(model_path, **kwargs)
     if eval:
         model.eval()
     return model

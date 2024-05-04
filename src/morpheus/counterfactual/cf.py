@@ -713,14 +713,14 @@ class Counterfactual(Explainer, FitMixin):
                         grads_num = np.clip(grads_num, self.clip[0], self.clip[1])  # type: ignore
                         grads_num_s = np.clip(grads_num_s, self.clip[0], self.clip[1])  # type: ignore
                         X_der_batch, X_der_batch_s = [], []
-                elif not self.numerical_diff:
+                elif not self.numerical_diff and i > 0:
                     self.loss_attack_s.backward()
                     with torch.no_grad():
                         self.adv_s.grad.clamp_(self.clip[0], self.clip[1])
 
                 self.loss_reg.backward(retain_graph=True)
                 with torch.no_grad():
-                    if self.numerical_diff:
+                    if self.numerical_diff or i == 0:
                         self.adv_s.grad.clamp_(self.clip[0], self.clip[1])
                     else:
                         self.adv_s.grad.clamp_(self.clip[0] * 2, self.clip[1] * 2)
