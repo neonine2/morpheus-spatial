@@ -75,17 +75,17 @@ def main(data_path):
     ]
 
     # probability cutoff for classification
-    threshold = 0.43
+    threshold = 0.33
 
     # optimization parameters
     optimization_param = {
         "use_kdtree": True,
         "theta": 40.0,
-        "kappa": -0.2,
+        "kappa": 0.0,
         "learning_rate_init": 0.1,
-        "beta": 70.0,
+        "beta": 80.0,
         "max_iterations": 1000,
-        "c_init": 10000.0,
+        "c_init": 1000.0,
         "c_steps": 5,
         "numerical_diff": False,
     }
@@ -98,11 +98,11 @@ def main(data_path):
         images=select_metadata,
         dataset=dataset,
         target_class=1,
-        model_path="/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/model/unet_mod/lightning_logs/version_0/checkpoints/epoch=27-step=9744.ckpt",
+        model_path="/groups/mthomson/zwang2/IMC/output/cedarsLiver_sz48_pxl3_nc44/replicate/model/epoch=27-step=9744.ckpt",
         channel_to_perturb=channel_to_perturb,
         optimization_params=optimization_param,
         threshold=threshold,
-        save_dir=f"{dataset.root_dir}/cf/beta70_auto/",
+        save_dir=f"{dataset.root_dir}/cf/kappa0/",
         device="cpu",
         num_workers=os.cpu_count() - 1,
         verbosity=0,

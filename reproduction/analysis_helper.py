@@ -4,8 +4,57 @@ import numpy as np
 import pandas as pd
 import torch
 import umap
-
+from typing import Union, List
 from morpheus import SpatialDataset, load_model
+
+
+def get_rmse_and_prediction(dataset, split, classify_threshold=0.5):
+    X, y, test_metadata, model = get_data_and_model(
+        dataset,
+        data_split=split,
+        remove_healthy=False,
+        remove_small_images=True,
+        remove_few_tumor_cells=False,
+        additional_col=[],
+    )
+    pred = model(X)
+    test_metadata["pred"] = pred
+    test_metadata["true"] = y
+
+    # group by patient and calculate the mean of the predictions
+    test_metadata["pred_binary"] = pred > classify_threshold
+    pred = test_metadata.groupby("ImageNumber").agg(
+        {"pred_binary": "mean", "true": "mean"}
+    )
+
+    # calculate the RMSE
+    rmse = np.sqrt(np.mean((pred["pred_binary"] - pred["true"]) ** 2))
+
+    return pred, rmse
+
+
+def optimize_threshold(dataset, split="validate"):
+    X, y, test_metadata, model = get_data_and_model(
+        dataset,
+        data_split=split,
+        remove_healthy=False,
+        remove_small_images=True,
+        remove_few_tumor_cells=False,
+        additional_col=[],
+    )
+    pred = model(X)
+    test_metadata["pred"] = pred
+    test_metadata["true"] = y
+
+    thresholds = np.linspace(0, 1, 101)
+    rmse = []
+    for t in thresholds:
+        test_metadata["pred_binary"] = test_metadata["pred"] > t
+        pred = test_metadata.groupby("ImageNumber").agg(
+            {"pred_binary": "mean", "true": "mean"}
+        )
+        rmse.append(np.sqrt(np.mean((pred["pred_binary"] - pred["true"]) ** 2)))
+    return thresholds[np.argmin(rmse)], np.min(rmse)
 
 
 def retrieve_perturbation(
@@ -95,15 +144,21 @@ def apply_perturbation(img_patch, perturbation, channel_names):
 
 def load_data_split(
     dataset,
-    data_split,
+    data_split: Union[str, List[str]],
     remove_healthy,
     remove_small_images,
     remove_few_tumor_cells,
     additional_col,
     parallel=False,
 ):
-    # get test data
-    _metadata = dataset.metadata[(dataset.metadata["splits"] == data_split)]
+    # get data
+    if isinstance(data_split, list):
+        # data_split is a list, use isin to filter
+        _metadata = dataset.metadata[dataset.metadata["splits"].isin(data_split)]
+    else:
+        # data_split is a string, use equality to filter
+        _metadata = dataset.metadata[dataset.metadata["splits"] == data_split]
+
     if additional_col:  # add columns like tissue type or FLD
         _metadata = get_additional_col(_metadata, dataset, additional_col)
     original_patch_count = _metadata["ImageNumber"].nunique()
@@ -115,8 +170,11 @@ def load_data_split(
         remove_few_tumor_cells=remove_few_tumor_cells,
     )
     final_image_count = _metadata["ImageNumber"].nunique()
-    print("Number of tissues filtered out:", original_patch_count - final_image_count)
-    print("Number of tissues remaining:", final_image_count)
+    if original_patch_count - final_image_count > 0:
+        print(
+            "Number of tissues filtered out:", original_patch_count - final_image_count
+        )
+        print("Number of tissues:", final_image_count)
 
     X = dataset.load_from_metadata(_metadata, parallel=parallel)
     y = _metadata["Contains_Tcytotoxic"].values.flatten()
@@ -140,7 +198,7 @@ def load_classifier(dataset, mu, stdev):
 
 def get_data_and_model(
     dataset: SpatialDataset,
-    data_split: str,
+    data_split: Union[str, List[str]],
     remove_healthy: bool = True,
     remove_small_images: bool = True,
     remove_few_tumor_cells: bool = True,

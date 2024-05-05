@@ -5,6 +5,62 @@ import matplotlib.pyplot as plt
 from matplotlib import colors
 import matplotlib.lines as mlines
 import scipy.cluster.hierarchy as sch
+from sklearn.linear_model import LinearRegression
+
+
+def plot_prediction_scatterplot(pred_df: pd.DataFrame):
+    _, ax = plt.subplots(figsize=(6, 6))
+    color = ["deeppink", "forestgreen", "slateblue"]
+    x = np.linspace(0, 1, 100)
+    for i, (name, pred) in enumerate(pred_df.items()):
+        x = pred["true"].to_numpy()
+        y = pred["pred_binary"].to_numpy()
+
+        # create and fit the linear regression model
+        linmodel = LinearRegression()
+        X = x.reshape(-1, 1)
+        linmodel.fit(X, y)
+        r_sq = linmodel.score(X, y)
+
+        ax.scatter(x, y, c=color[i], label=name)
+        ax.plot(x, linmodel.predict(x.reshape(-1, 1)), c=color[i])
+        plt.text(
+            0.7,
+            0.19 - i * 0.08,
+            "R² = {:.2f}".format(r_sq),
+            fontsize=11,
+            c=color[i],
+        )
+
+    ax.legend(frameon=False)
+    ax.plot([0, 1], [0, 1], c="black")
+    # set aspect ratio to 1
+    plt.xlabel("True proportion of patches with T cells", fontsize=12)
+    plt.ylabel("Predict proportion of patches with T cells", fontsize=12)
+    plt.show()
+
+
+def plot_rmse(all_rmse):
+    # Create a sample DataFrame
+    rmse = {
+        "U-Net": [all_rmse["Melanoma"], all_rmse["CRC"], all_rmse["Breast tumor"]],
+        "MLP": [0.12, 0.106, 0.113],
+        "Linear": [0.15, 0.17, 0.16],
+    }
+    df = pd.DataFrame(rmse, index=["Melanoma", "CRC", "Breast tumor"])
+    # plot grouped bar chart
+    _ = df.plot(kind="bar", figsize=(6, 6))
+
+    # add title and labels
+    plt.xlabel("Tumor Type")
+    plt.xticks(rotation=0)
+    plt.ylabel("Root Mean Squared Error (RMSE)")
+
+    # move legend outside the plot to the right
+    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+
+    # show the plot
+    plt.show()
 
 
 def plot_patient_perturbation(
@@ -508,15 +564,15 @@ def plot_umap_embedding(embedding_df, umap_cf):
     plt.figure(figsize=(8, 5))
 
     plt.scatter(
-        x=embedding_df.loc[cond1, 'umap1'],
-        y=embedding_df.loc[cond1, 'umap2'],
+        x=embedding_df.loc[cond1, "umap1"],
+        y=embedding_df.loc[cond1, "umap2"],
         s=0.2,
         c="#FF0000",
         alpha=0.5,
     )
     plt.scatter(
-        x=embedding_df.loc[cond2, 'umap1'],
-        y=embedding_df.loc[cond2, 'umap2'],
+        x=embedding_df.loc[cond2, "umap1"],
+        y=embedding_df.loc[cond2, "umap2"],
         s=0.2,
         c="#04b497",
         alpha=0.8,

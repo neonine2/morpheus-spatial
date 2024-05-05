@@ -57,17 +57,17 @@ def main(data_path):
     ]
 
     # probability cutoff for classification
-    threshold = 0.43
+    threshold = 0.31
 
     # optimization parameters
     optimization_param = {
         "use_kdtree": True,
         "theta": 60.0,
-        "kappa": -0.9,
+        "kappa": -0.7,
         "learning_rate_init": 0.1,
         "beta": 2.0,
         "max_iterations": 1000,
-        "c_init": 80000.0,
+        "c_init": 25000.0,
         "c_steps": 5,
         "numerical_diff": False,
     }
@@ -80,11 +80,11 @@ def main(data_path):
         images=select_metadata,
         dataset=dataset,
         target_class=1,
-        model_path="/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/model/unet/lightning_logs/version_1/checkpoints/epoch=21-step=7106.ckpt",
+        model_path="/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/replicate/model/epoch=21-step=7106.ckpt",
         channel_to_perturb=channel_to_perturb,
         optimization_params=optimization_param,
         threshold=threshold,
-        save_dir=f"{dataset.root_dir}/cf/c80000/",
+        save_dir=f"{dataset.root_dir}/cf/new_thresh/",
         device="cpu",
         num_workers=os.cpu_count() - 1,
         verbosity=0,
