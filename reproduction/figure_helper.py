@@ -6,6 +6,9 @@ from matplotlib import colors
 import matplotlib.lines as mlines
 import scipy.cluster.hierarchy as sch
 from sklearn.linear_model import LinearRegression
+from random import shuffle
+from scipy.stats import t
+from analysis_helper import load_data_split
 
 
 def plot_prediction_scatterplot(pred_df: pd.DataFrame):
@@ -62,12 +65,27 @@ def plot_rmse(all_rmse):
     # show the plot
     plt.show()
 
+def get_upper_thresh(mla_data):
+    X, _, _metadata = load_data_split(
+        mla_data,
+        data_split="train",
+        remove_healthy=False,
+        remove_small_images=False,
+        remove_few_tumor_cells=False,
+        parallel=False,
+    )
+    q75, q25 = np.percentile(np.mean(X, axis=(1,2)), [75 ,25], axis=0) # determine thres based on IQR of original data
+    return np.max((q75 - q25)/q25) * 1.5 * 100
+
 
 def plot_patient_perturbation(
+    dataset,
     rel_perturbation: pd.DataFrame,
     channel_to_perturb: list,
     numClust: int = 2,
     extra_cols: list = [],
+    save_fig: bool = False,
+    set_thresh: bool = True,
 ):
     """
     Plot the perturbation of each patient as well as the median perturbation of each cluster of patients
@@ -75,6 +93,16 @@ def plot_patient_perturbation(
     # Remove normal tissue samples (for crc dataset only)
     if "type" in rel_perturbation.columns:
         rel_perturbation = rel_perturbation[rel_perturbation["type"] != "Nor"]
+
+    # Filter out rows with extreme perturbations
+    if set_thresh: 
+        thresh = get_upper_thresh(dataset) # set thresh based on IQR of original data
+    else: # precomputed for example dataset
+        thresh = 79*100
+    upper_bound = np.maximum(np.median(rel_perturbation[channel_to_perturb].quantile(0.99)), thresh) # use maximum to be conservative with filter
+    lower_bound = np.maximum(np.median(rel_perturbation[channel_to_perturb].quantile(0.01)), -100)
+    to_keep = (rel_perturbation[channel_to_perturb] <= upper_bound).all(axis=1) & (rel_perturbation[channel_to_perturb] >= lower_bound).all(axis=1)
+    rel_perturbation = rel_perturbation[to_keep] 
 
     # Plot the perturbation of each patient
     patient_cf = (
@@ -108,13 +136,16 @@ def plot_patient_perturbation(
         row_cluster=True,
         col_cluster=False,
         cmap=cmap,
-        method="average" if vmax > 500 else "ward",
-        metric="correlation" if vmax > 500 else "euclidean",
+        method="average" if vmax > 500 else "complete",
+        metric="correlation",
         xticklabels=[x[:-5] if x.endswith("_mRNA") else x for x in channel_to_perturb],
         # yticklabels=False,
         norm=colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax / 4 + 1),
         figsize=(8, 8),
     )
+
+    if save_fig:
+        axe.savefig("clustermap.svg", format="svg", dpi=300, bbox_inches="tight")
 
     # if FLD or Cancer_Stage is in patient_cf, merge them into grouped_cf using PatientID
     if extra_cols:
@@ -133,9 +164,9 @@ def plot_patient_perturbation(
     grouped_cf["cluster"] = clusters
     for ii in range(numClust):
         c = np.array(grouped_cf.index[clusters == ii + 1])
-        strategy_cluster.append(
-            np.median(grouped_cf.loc[c, channel_to_perturb], axis=0)
-        )
+        med_strat = np.median(grouped_cf.loc[c, channel_to_perturb], axis=0)
+        med_strat[abs(med_strat) < 5] = 0
+        strategy_cluster.append(med_strat)
         ax[ii].bar(
             range(len(channel_to_perturb)),
             strategy_cluster[ii],
@@ -149,6 +180,9 @@ def plot_patient_perturbation(
 
         # draw line as x = 0
         ax[ii].axhline(0, color="black")
+
+    if save_fig:
+        plt.savefig("cluster_median.svg", format="svg", dpi=300, bbox_inches="tight")
 
     plt.show()
 
@@ -201,6 +235,7 @@ def plot_perturbation_performance(
     strategy_mapping: dict,
     strat2_color="#2ba02c",
     strat1_color="#faaf40",
+    save_fig: bool = False,
 ):
     # Aggregate performance per patient
     tcell_level_patient, tcell_level_image = aggregate_performance_per_patient(
@@ -234,6 +269,7 @@ def plot_perturbation_performance(
             strategy_mapping,
             strat1_color,
             strat2_color,
+            save_fig,
         )
 
         tcell_level_image = (
@@ -255,6 +291,7 @@ def plot_perturbation_performance(
             strategy_mapping,
             strat1_color,
             strat2_color,
+            save_fig,
         )
 
     elif patient_phenotype == "FLD":  # crc dataset
@@ -264,12 +301,19 @@ def plot_perturbation_performance(
             patient_phenotype,
             strat1_color,
             strat2_color,
+            save_fig,
         )
+
     return
 
 
 def plot_horizontal_bar(
-    tcell_level_patient, patient_phenotype, strategy_mapping, strat1_color, strat2_color
+    tcell_level_patient,
+    patient_phenotype,
+    strategy_mapping,
+    strat1_color,
+    strat2_color,
+    save_fig: bool = False,
 ):
 
     # map the quantiles as well
@@ -387,6 +431,10 @@ def plot_horizontal_bar(
     ax.legend(legend_handles, labels, loc="lower right")
 
     plt.tight_layout()
+    if save_fig:
+        plt.savefig(
+            "efficacy_hbar_plot.svg", format="svg", dpi=300, bbox_inches="tight"
+        )
     plt.show()
 
 
@@ -396,6 +444,7 @@ def plot_two_vertical_bar(
     patient_phenotype,
     strat1_color,
     strat2_color,
+    save_fig: bool = False,
 ):
     tcell_level_patient = tcell_level_patient.drop(
         columns=[
@@ -496,11 +545,18 @@ def plot_two_vertical_bar(
                 ax[i].get_legend().remove()
 
     plt.tight_layout()
+    if save_fig:
+        plt.savefig("efficacy_bar_plot.svg", format="svg", dpi=300, bbox_inches="tight")
     plt.show()
 
 
 def make_line_plots(
-    tcell_level_image, patient_phenotype, strategy_mapping, strat1_color, strat2_color
+    tcell_level_image,
+    patient_phenotype,
+    strategy_mapping,
+    strat1_color,
+    strat2_color,
+    save_fig: bool = False,
 ):
     # make a separate line plot for each patient, each line in a plot is a separate image with two points for original and perturbed T cell infiltration level
     patient_id = tcell_level_image["PatientID"].unique()
@@ -549,10 +605,156 @@ def make_line_plots(
             ax.set_title(f"Patient {pid}")
             ax.set_xticks([0, 1])
     plt.tight_layout()
+    if save_fig:
+        plt.savefig(
+            "efficacy_line_plot.svg", format="svg", dpi=300, bbox_inches="tight"
+        )
     plt.show()
 
 
-def plot_umap_embedding(embedding_df, umap_cf):
+def plot_umap_embedding_crc(embedding_df, umap_cf):
+    plt.figure(figsize=(8, 5))
+    noTcell = (embedding_df["Contains_Tcytotoxic"] == 0) & (
+        embedding_df["Contains_Tumor"] == 1
+    )
+    plt.scatter(
+        x=embedding_df.loc[noTcell, "umap1"],
+        y=embedding_df.loc[noTcell, "umap2"],
+        s=0.2,
+        c="tab:red",
+        alpha=0.5,
+        label="no T cells (with tumor)",
+    )
+    cmap = {"Nor": "tab:purple", "PriT": "tab:cyan", "metaT": "goldenrod"}
+    label_for_legend = {
+        "Nor": "T cells (healthy tissue)",
+        "PriT": "T cells (primary)",
+        "metaT": "T cells (metastatic)",
+    }
+    for key, value in cmap.items():
+        cond = (embedding_df["Contains_Tcytotoxic"] == 1) & (
+            embedding_df["type"] == key
+        )
+        plt.scatter(
+            x=embedding_df.loc[cond, "umap1"],
+            y=embedding_df.loc[cond, "umap2"],
+            s=0.2,
+            c=value,
+            label=label_for_legend[key],
+            alpha=0.8,
+        )
+
+    # Create legend with larger markers using proxy artists
+    legend_elements = [
+        mlines.Line2D(
+            [0],
+            [0],
+            color="tab:red",
+            marker="o",
+            linestyle="None",
+            markersize=5,
+            label="Tumor patch without T cell",
+        ),
+        mlines.Line2D(
+            [0],
+            [0],
+            color="tab:purple",
+            marker="o",
+            linestyle="None",
+            markersize=5,
+            label="Healthy tissue",
+        ),
+        mlines.Line2D(
+            [0],
+            [0],
+            color="goldenrod",
+            marker="o",
+            linestyle="None",
+            markersize=5,
+            label="Metastatic tumor",
+        ),
+        mlines.Line2D(
+            [0],
+            [0],
+            color="tab:cyan",
+            marker="o",
+            linestyle="None",
+            markersize=5,
+            label="Primary tumor",
+        ),
+    ]
+
+    plt.legend(handles=legend_elements, fontsize=10)
+
+    plt.axis("off")  # Turn off the axis
+    ax = plt.gca()
+    ax.invert_xaxis()
+    ax.invert_yaxis()
+    plt.show()
+
+    plt.figure(figsize=(8, 5))
+    plt.scatter(
+        x=umap_cf["orig_umap1"],
+        y=umap_cf["orig_umap2"],
+        s=0.2,
+        c="tab:red",
+        label="No T cells",
+        alpha=0.6,
+    )
+
+    plt.scatter(
+        x=umap_cf["perturbed_umap1"],
+        y=umap_cf["perturbed_umap2"],
+        s=0.2,
+        c="tab:blue",
+        label="Perturbed",
+        alpha=0.8,
+    )
+
+    for i in range(0, len(umap_cf), 3):
+        plt.arrow(
+            umap_cf["orig_umap1"][i],
+            umap_cf["orig_umap2"][i],
+            umap_cf["perturbed_umap1"][i] - umap_cf["orig_umap1"][i],
+            umap_cf["perturbed_umap2"][i] - umap_cf["orig_umap2"][i],
+            color="tab:blue",
+            alpha=0.01,
+            head_width=0.1,
+            length_includes_head=True,
+        )
+
+    # Create legend with larger markers using proxy artists
+    legend_elements = [
+        mlines.Line2D(
+            [0],
+            [0],
+            color="tab:red",
+            marker="o",
+            linestyle="None",
+            markersize=5,
+            label="Tumor patch without T cell",
+        ),
+        mlines.Line2D(
+            [0],
+            [0],
+            color="tab:blue",
+            marker="o",
+            linestyle="None",
+            markersize=5,
+            label="Counterfactual",
+        ),
+    ]
+    plt.legend(handles=legend_elements, fontsize=10)
+    ax = plt.gca()
+    ax.invert_xaxis()
+    ax.invert_yaxis()
+    plt.axis("off")  # Turn off the axis
+    plt.show()
+
+
+def plot_umap_embedding(
+    embedding_df, umap_cf, pie_chart: bool = False, save_fig: bool = False
+):
     cond1 = (embedding_df["Contains_Tcytotoxic"] == 0) & (
         embedding_df["Contains_Tumor"] == 1
     )
@@ -587,7 +789,7 @@ def plot_umap_embedding(embedding_df, umap_cf):
             marker="o",
             linestyle="None",
             markersize=5,
-            label="no T cells",
+            label="without T cells",
         ),
         mlines.Line2D(
             [0],
@@ -596,24 +798,24 @@ def plot_umap_embedding(embedding_df, umap_cf):
             marker="o",
             linestyle="None",
             markersize=5,
-            label="T cells",
+            label="with T cells",
         ),
     ]
 
     plt.legend(handles=legend_elements)
-
     plt.axis("off")  # Turn off the axis
+    if save_fig:
+        plt.savefig("umap_embedding.png", dpi=300, bbox_inches="tight")
     plt.show()
 
     # group the perturbed points into clusters
     from sklearn.cluster import KMeans
 
     x = np.array(umap_cf[["perturbed_umap1", "perturbed_umap2"]])
-    # x = df_perturbed_normalized.to_numpy()
 
     # Create a KMeans object with 2 clusters
-    ncluster = 9
-    kmeans = KMeans(n_clusters=ncluster, random_state=0)
+    ncluster = 8
+    kmeans = KMeans(n_clusters=ncluster, random_state=42)
 
     # Fit the KMeans object to the data
     kmeans.fit(x)
@@ -634,15 +836,14 @@ def plot_umap_embedding(embedding_df, umap_cf):
 
     # Draw arrows from each point in dataset 1 to its corresponding point in dataset 2
     color_map = [
-        "tab:orange",
         "tab:blue",
+        "tab:orange",
         "darkgray",
         "darkgray",
         "darkgray",
-        "tab:green",
         "tab:purple",
         "darkgray",
-        "darkgray",
+        "tab:green",
     ]
 
     for i in range(0, len(cluster_labels), 4):
@@ -654,7 +855,7 @@ def plot_umap_embedding(embedding_df, umap_cf):
         elif color_map[cluster_labels[i]] == "darkgray":
             alpha = 0
         elif color_map[cluster_labels[i]] in ["tab:blue", "tab:green"]:
-            alpha = 0.8
+            alpha = 0.12
         plt.arrow(
             umap_cf["orig_umap1"][i],
             umap_cf["orig_umap2"][i],
@@ -671,8 +872,432 @@ def plot_umap_embedding(embedding_df, umap_cf):
         y=umap_cf["perturbed_umap2"],
         s=0.3,
         c=[color_map[ii] for ii in cluster_labels],
-        label="Perturbed",
+        label="Counterfactual",
         alpha=[1 if color_map[ii] != "darkgray" else 0 for ii in cluster_labels],
     )
     plt.axis("off")  # Turn off the axis
+    if save_fig:
+        plt.savefig("umap_embedding_cf.png", dpi=300, bbox_inches="tight")
+    plt.show()
+
+    if pie_chart:
+        df = embedding_df.loc[cond2]
+        centroids = kmeans.cluster_centers_
+        # get the index of the 4 largest clusters
+        largest_clusters = np.argsort(label_counts)[-4:]
+
+        def generate_distinct_colors(num_colors):
+            cmap = plt.get_cmap("nipy_spectral", num_colors * 2)
+            return [cmap(i * 2) for i in range(num_colors)]
+
+        # Create a consistent color map for PatientIDs
+        unique_patients = df["PatientID"].unique()
+        colors = generate_distinct_colors(len(unique_patients))
+        shuffle(colors)
+        color_map = {patient: color for patient, color in zip(unique_patients, colors)}
+
+        # Set up the figure and axes for the subplots
+        fig, axes = plt.subplots(1, 4, figsize=(10, 10 / 4))  # 1 row, 4 columns
+
+        for i, cluster_ in enumerate(largest_clusters):
+            near_centroid = (
+                np.sqrt(
+                    np.sum((df[["umap1", "umap2"]] - centroids[cluster_]) ** 2, axis=1)
+                )
+                < 0.4
+            )
+            nearPatient = df.loc[near_centroid, "PatientID"].value_counts()
+
+            # Map the colors for the current pie chart
+            pie_colors = [color_map[patient] for patient in nearPatient.index]
+
+            # Plot on the i-th subplot axis
+            axes[i].pie(
+                nearPatient,
+                labels=nearPatient.index,
+                startangle=90,
+                colors=pie_colors,
+            )
+            axes[i].set_title(f"cluster centroid {np.round(centroids[cluster_])}")
+
+        # Adjust layout to prevent overlap
+        plt.tight_layout()
+
+        # Save figure if needed
+        if save_fig:
+            plt.savefig("pie_charts.svg", dpi=300, bbox_inches="tight")
+
+        plt.show()
+
+
+def plot_data(ax, plot_df, names, p_cutoff, strat2_color, strat1_color):
+    significant_mask = plot_df["-log10(p_value_adj)"] > -np.log10(p_cutoff)
+    positive_fc_mask = plot_df["log2(fold_change)"] > 0
+    negative_fc_mask = plot_df["log2(fold_change)"] < 0
+
+    # Plot significant positive fold changes
+    ax.scatter(
+        plot_df.loc[significant_mask & positive_fc_mask, "log2(fold_change)"],
+        plot_df.loc[significant_mask & positive_fc_mask, "-log10(p_value_adj)"],
+        color=strat1_color,
+        alpha=0.7,
+    )
+
+    # Plot significant negative fold changes
+    ax.scatter(
+        plot_df.loc[significant_mask & negative_fc_mask, "log2(fold_change)"],
+        plot_df.loc[significant_mask & negative_fc_mask, "-log10(p_value_adj)"],
+        color=strat2_color,
+        alpha=0.7,
+    )
+
+    # Plot non-significant points
+    ax.scatter(
+        plot_df.loc[~significant_mask, "log2(fold_change)"],
+        plot_df.loc[~significant_mask, "-log10(p_value_adj)"],
+        color="gray",
+        alpha=0.5,
+    )
+
+    ax.axvline(x=0, color="black", linestyle="--")  # Vertical line at x=0
+    if not significant_mask.all():
+        ax.axhline(
+            y=-np.log10(p_cutoff),
+            color="black",
+            linestyle="--",
+            label="Significance Threshold",
+        )  # Significance threshold
+
+    # Adding text labels to points
+    for i in plot_df.index:
+        ax.text(
+            plot_df.loc[i, "log2(fold_change)"] * 1.01,
+            plot_df.loc[i, "-log10(p_value_adj)"] * 1.01,
+            (
+                names[i][:-5] if "_mRNA" in names[i] else names[i]
+            ),  # remove _mRNA if present
+            fontsize=10,
+            ha="left",
+        )
+    ax.set_yscale("log")
+
+
+def make_volcano_plot(
+    gene_df,
+    celltype_df,
+    p_cutoff=0.05,
+    strat2_color="#2ba02c",
+    strat1_color="#faaf40",
+    save_fig: bool = False,
+):
+    """
+    Create a volcano plot to visualize differential expression results.
+
+    Parameters:
+    - plot_df (pd.DataFrame): DataFrame containing log2 fold changes and adjusted p-values for the differential analysis.
+    - compare (str, default="gene"): Determines the label for the plot, could be "gene" or "celltype".
+    - p_cutoff (float, default=0.05): Significance threshold for highlighting significant results on the plot.
+    - save_volcanoplot (bool, default=False): If True, the plot will be saved to the specified path.
+
+    Returns:
+    - None: Displays and optionally saves a volcano plot.
+    """
+    # Setup the figure and subplots
+    fig, axes = plt.subplots(
+        nrows=1, ncols=2, figsize=(7, 3.65)
+    )  # Adjust the figure size as needed
+
+    # Plot the first dataframe
+    # remove gene named CXCL12_mRNA from gene_df
+    gene_df = gene_df[~gene_df["gene"].isin(["CXCL12_mRNA", "CCL8_mRNA"])]
+    plot_data(axes[0], gene_df, gene_df["gene"], p_cutoff, strat2_color, strat1_color)
+
+    # Plot the second dataframe
+    plot_data(
+        axes[1],
+        celltype_df,
+        celltype_df["celltype"],
+        p_cutoff,
+        strat2_color,
+        strat1_color,
+    )
+
+    # Set a common xlabel and ylabel
+    fig.text(
+        0.5,
+        0,
+        "Log2 (patient cluster 1 / patient cluster 2)",
+        ha="center",
+        va="center",
+        fontsize=14,
+    )  # Central x-axis label
+    fig.text(
+        0,
+        0.5,
+        "-Log10 (Adjusted P-value)",
+        ha="center",
+        va="center",
+        rotation="vertical",
+        fontsize=14,
+    )  # Central y-axis label
+    # set ylim
+
+    plt.tight_layout()  # Adjust subplots to fit into figure area.
+    if save_fig:
+        plt.savefig("volcano_plot.svg", format="svg", dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+def plot_tissue_level_perturbation(cf_df, channel_to_perturb):
+
+    nrow_per_image = cf_df.groupby("ImageNumber").size()
+
+    image_to_perturb = nrow_per_image[nrow_per_image > 1].index
+
+    # get the perturbations for the images
+    image_perturbation = cf_df[cf_df["ImageNumber"].isin(image_to_perturb)]
+
+    # create a new column named label that is a combination of ImageNumber and type
+    image_perturbation = image_perturbation.copy()
+    image_perturbation.loc[:, "label"] = (
+        image_perturbation["PatientID"].astype(str)
+        + "_"
+        + image_perturbation["type"].astype(str)
+    )
+
+    # apply median to all channel_to_perturb_crc and then "first" to the column named type
+    df = image_perturbation.groupby("label").agg(
+        {
+            **{
+                k: "median" for k in channel_to_perturb
+            },  # apply median to all channel_to_perturb_crc
+            "type": "first",  # apply "first" to the column named type
+        }
+    )
+
+    cmap = sns.diverging_palette(240, 10, as_cmap=True)  # "vlag" colormap
+    cmap.set_bad("white")  # Set color for zeros to white
+
+    # Separate the type column for use in coloring
+    types = df["type"]
+
+    # Create a color map for the 'type' column
+    type_colors = {"Nor": "tab:purple", "metaT": "goldenrod", "PriT": "tab:cyan"}
+    row_colors = types.map(type_colors)
+
+    vmin = df[channel_to_perturb].min().min()
+    vmax = df[channel_to_perturb].max().max()
+
+    # First, create a clustermap to get the order of the rows
+    initial_cluster = sns.clustermap(
+        df[channel_to_perturb],
+        row_cluster=True,
+        col_cluster=True,
+        cmap=cmap,
+        method="ward",
+        xticklabels=channel_to_perturb,
+        norm=colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax / 3 + 1),
+        figsize=(10, 10),
+    )
+    # dont show plot
+    plt.close()
+
+    # Reorder row_colors according to the dendrogram's leaves
+    ordered_row_colors = row_colors.iloc[initial_cluster.dendrogram_row.reordered_ind]
+
+    # Create the heatmap
+    vmin = df[channel_to_perturb].min().min()
+    vmax = df[channel_to_perturb].max().max()
+    axe = sns.clustermap(
+        df[channel_to_perturb],
+        row_cluster=True,
+        col_cluster=False,
+        yticklabels=False,
+        cmap=cmap,
+        method="ward",
+        xticklabels=channel_to_perturb,
+        norm=colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax / 3 + 1),
+        row_colors=ordered_row_colors,
+        figsize=(10, 10),
+    )
+
+    # Display the plot
+    plt.show()
+
+
+def make_patch_heatmap_mla(dfSUBSET, labelSUBSET, save_fig: bool = False):
+    # Create a new clustermap with only the subset of columns clustered
+    norm = colors.TwoSlopeNorm(vcenter=0.0)
+
+    ax = sns.clustermap(
+        dfSUBSET,
+        z_score=0,
+        row_cluster=True,
+        col_cluster=False,
+        cmap="PuOr_r",
+        method="ward",
+        xticklabels=[name_[:-5] for name_ in dfSUBSET.columns],
+        yticklabels=[],
+        norm=norm,
+        figsize=(8, 10),
+    )
+    ax.ax_heatmap.set_xticklabels(
+        ax.ax_heatmap.get_xticklabels(), rotation=80, fontsize=16
+    )
+    ax.cax.tick_params(labelsize=16)
+    row_order = ax.dendrogram_row.reordered_ind
+
+    # fig = ax.figure
+    # fig.savefig(f'patch_clustermap.png', dpi=300)
+
+    # Access the Axes objects associated with the clustermap
+    ax_heatmap = ax.ax_heatmap
+    ax_col_dendrogram = ax.ax_col_dendrogram
+    ax_row_dendrogram = ax.ax_row_dendrogram
+    if save_fig:
+        plt.savefig("patch_clustermap.png", dpi=300)
+    plt.show()
+    # Remove the heatmap from the plot
+    # ax_heatmap.remove()
+
+    # Save the dendrogram and row/column labels as a vector PDF file
+    # fig = ax.figure
+    # fig.savefig(f"patch_plot.svg", dpi=300, rasterized=False)
+
+    data = labelSUBSET.iloc[row_order, :]  # reorder the data
+    fig, axes = plt.subplots(
+        nrows=1,
+        ncols=3,
+        sharex=True,
+        sharey=True,
+        gridspec_kw={"wspace": 0, "hspace": 0},
+    )
+    cmaplist = ["YlGnBu", "RdPu", "PuOr"]
+    for i, col in enumerate(["Contains_Tcytotoxic", "Contains_Tumor", "IHC_T_score"]):
+        val = data[col].values
+        if col == "IHC_T_score":
+            val = np.array([[1] if item == "I" else [0] for item in val])
+        else:
+            val = val.astype(float)
+        axes[i].imshow(
+            val[:, np.newaxis], cmap="YlGnBu_r", aspect=0.002, interpolation="spline36"
+        )
+        axes[i].set_xticklabels([])
+        axes[i].set_yticklabels([])
+        # remove the x and y axis
+        axes[i].axis("off")
+    # set the margins to zero
+    plt.subplots_adjust(
+        left=0.05, right=0.95, bottom=0.05, top=0.95, wspace=0, hspace=0
+    )
+    if save_fig:
+        plt.savefig("patch_heatmap.png", dpi=300)
+
+
+def make_multi_strat_plot(
+    allStrategy, tcell_level_crc, chemlabel, save_fig: bool = False
+):
+    # get column names that contain the word 'strategy'
+    strategy_cols = ["true_orig"] + tcell_level_crc.columns[
+        tcell_level_crc.columns.str.contains("strategy")
+    ].tolist()
+    img_mean = tcell_level_crc.groupby(["ImageNumber"]).agg(
+        {col: "mean" for col in strategy_cols}
+    )
+
+    infiltrate_mean = img_mean.mean()
+
+    # Calculate Standard Error of the Mean (SEM)
+    sem = img_mean.std(ddof=1) / np.sqrt(img_mean.count())
+
+    # Confidence Interval Bounds
+    infiltrate_lower = infiltrate_mean - t.ppf(0.975, df=img_mean.count() - 1) * sem
+    infiltrate_upper = infiltrate_mean + t.ppf(0.975, df=img_mean.count() - 1) * sem
+
+    # Error for plotting: [Lower bounds, Upper bounds]
+    error = np.array(
+        [infiltrate_mean - infiltrate_lower, infiltrate_upper - infiltrate_mean]
+    )
+
+    plt.figure(figsize=(9, 7))
+    plt.subplot(211, aspect=7)
+    plt.bar(
+        np.arange(len(allStrategy)),
+        infiltrate_mean[1:],
+        yerr=error[:, 1:],
+        align="center",
+        capsize=3,
+        color="#17a2b8",
+        width=0.6,
+        label="Perturbed",
+    )
+    plt.axhline(
+        infiltrate_mean["true_orig"],
+        color="tab:gray",
+        linewidth=1.5,
+        ls="--",
+        label="Original",
+    )
+
+    # Add a transparent rectangle around the horizontal line to represent the error
+    rect = plt.Rectangle(
+        (-0.5, infiltrate_lower["true_orig"]),
+        4,
+        infiltrate_upper["true_orig"] - infiltrate_lower["true_orig"],
+        facecolor="tab:gray",
+        alpha=0.5,
+    )
+    plt.ylabel("T cell infiltration level")
+    plt.ylim([0.07, 0.55])
+
+    ax = plt.gca()
+    ax.add_patch(rect)
+    ax.set_yticks(np.arange(0.1, 0.6, 0.1))
+    current_values = ax.get_yticks()
+    ax.set_yticklabels(["{:,.0%}".format(x) for x in current_values])
+    plt.legend(frameon=False, fontsize="12")
+    plt.show()
+
+    from matplotlib import colors, cm
+
+    plt.subplot(212, aspect=4)
+    # select a divergent colormap
+    norm = colors.TwoSlopeNorm(
+        vmin=np.min(allStrategy), vcenter=0.0, vmax=np.max(allStrategy) + 1
+    )
+    plt.imshow(
+        np.transpose(allStrategy).loc[chemlabel], norm=norm, cmap=cm.RdBu_r, aspect=0.5
+    )
+    ax = plt.gca()
+    # Major ticks
+    ax.set_xticks(np.arange(0, 5, 1))
+    ax.set_yticks(np.arange(0, 10, 1))
+
+    # Minor ticks
+    ax.set_xticks(np.arange(-0.5, 5, 1), minor=True)
+    ax.set_yticks(np.arange(-0.5, 10, 1), minor=True)
+
+    # Gridlines based on minor ticks
+    ax.grid(which="minor", axis="y", color="w", linestyle="-", linewidth=2)
+    ax.grid(which="minor", axis="x", color="w", linestyle="-", linewidth=8)
+
+    plt.yticks(np.arange(len(chemlabel)), np.array(chemlabel), fontsize="8")
+    ax.spines.top.set_visible(False)
+    ax.spines.left.set_visible(False)
+    ax.spines.bottom.set_visible(False)
+    ax.spines["right"].set(color="white")
+    plt.tick_params(
+        axis="both",  # changes apply to the x-axis
+        which="both",  # both major and minor ticks are affected
+        bottom=False,  # ticks along the bottom edge are off
+        top=False,
+        left=False,  # ticks along the top edge are off
+        labelbottom=False,
+    )  # labels along the bottom edge are off
+    cbar = plt.colorbar(ticks=[500, 250, 0, -50, -100])
+    cbar.ax.set_yticklabels(
+        ["$500$", "$250$", "$0$", "$-50$", "$-100$"], fontsize=7
+    )  # vertically oriented colorbar
+    cbar.set_label("Tumor perturbation (%)", rotation=270, fontsize=8)
+    plt.ylabel("Perturbed \n target(s)")
     plt.show()

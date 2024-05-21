@@ -57,7 +57,7 @@ def main(data_path):
     ]
 
     # probability cutoff for classification
-    threshold = 0.31
+    threshold = 0.5
 
     # optimization parameters
     optimization_param = {
@@ -84,7 +84,7 @@ def main(data_path):
         channel_to_perturb=channel_to_perturb,
         optimization_params=optimization_param,
         threshold=threshold,
-        save_dir=f"{dataset.root_dir}/cf/new_thresh/",
+        save_dir=f"{dataset.root_dir}/cf/mel_thresh05/",
         device="cpu",
         num_workers=os.cpu_count() - 1,
         verbosity=0,

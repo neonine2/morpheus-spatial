@@ -5,6 +5,8 @@ import pandas as pd
 import torch
 import umap
 from typing import Union, List
+import scipy.stats as stats
+from statsmodels.stats import multitest
 from morpheus import SpatialDataset, load_model
 
 
@@ -64,6 +66,9 @@ def retrieve_perturbation(
     cf_path = dataset.cf_dir
     # get all npz files in the directory
     npz_files = [f for f in os.listdir(cf_path) if f.endswith(".npz")]
+
+    if len(npz_files) == 0:
+        raise ValueError("No counterfactual files found in the directory")
 
     # reorder the files by the number in the file name
     get_id = lambda x: int(x.split("_")[1].split(".")[0])
@@ -145,10 +150,10 @@ def apply_perturbation(img_patch, perturbation, channel_names):
 def load_data_split(
     dataset,
     data_split: Union[str, List[str]],
-    remove_healthy,
-    remove_small_images,
-    remove_few_tumor_cells,
-    additional_col,
+    remove_healthy=False,
+    remove_small_images=False,
+    remove_few_tumor_cells=False,
+    additional_col=[],
     parallel=False,
 ):
     # get data
@@ -239,15 +244,17 @@ def get_umap_embeddings(
     cf_df: pd.DataFrame,
     channel_to_perturb: list,
     data_split: str = "train",
+    additional_col: list = [],
 ):
 
     # load data and model
-    X, y, test_metadata = get_data_and_model(
+    X, y, metadata = get_data_and_model(
         dataset,
         data_split=data_split,
         remove_healthy=False,
         remove_small_images=False,
         remove_few_tumor_cells=False,
+        additional_col=additional_col,
         data_only=True,
     )
 
@@ -261,18 +268,11 @@ def get_umap_embeddings(
     print(f"number of rows removed: {len(df_normalized) - np.array(valid_rows).sum()}")
     df_normalized = df_normalized[valid_rows]
     y = y[valid_rows]
-    test_metadata = test_metadata[valid_rows]
-    df_normalized.index = test_metadata["patch_id"]
+    metadata = metadata[valid_rows]
+    df_normalized.index = metadata["patch_id"]
 
     # get counterfactuals
     print("Loading counterfactuals")
-    # orig_cf = np.zeros([len(cf_df), len(dataset.channel_names)])
-    # for id, patch_id in enumerate(cf_df["patch_id"].to_numpy()):
-    #     img = np.load(f"{dataset.split_dir}/{data_split}/0/patch_{patch_id}.npy")
-    #     orig_cf[id, :] = np.mean(img, axis=(0, 1))
-    # orig_cf = pd.DataFrame(orig_cf, columns=dataset.channel_names)
-    # orig_cf.index = cf_df["patch_id"]
-
     perturb_df = cf_df[channel_to_perturb] / 100 + 1
     perturb_df.index = cf_df["patch_id"]
 
@@ -298,7 +298,7 @@ def get_umap_embeddings(
 
     np.random.seed(42)
     # Create a UMAP object with a fixed random state
-    umap_model = umap.UMAP(random_state=42, n_jobs=-1, verbose=False)
+    umap_model = umap.UMAP(random_state=42, verbose=False)
     # fit UMAP model to the entire training data
     print("Fitting UMAP model")
     embedding = umap_model.fit_transform(df_normalized[channel_to_perturb])
@@ -312,7 +312,7 @@ def get_umap_embeddings(
     # combine the embeddings with the labels into one dataframe
     embedding_df = pd.DataFrame(embedding, columns=["umap1", "umap2"])
     embedding_df["patch_id"] = df_normalized.index
-    embedding_df = embedding_df.merge(test_metadata, on="patch_id", how="left")
+    embedding_df = embedding_df.merge(metadata, on="patch_id", how="left")
 
     # combine umap_orig and umap_perturbed with the patch_id and patient_id
     umap_orig = pd.DataFrame(umap_orig, columns=["orig_umap1", "orig_umap2"])
@@ -358,14 +358,14 @@ def assess_perturbation(
     print("original (true) = %.3f" % y_test.mean())
 
     # perturb image patch by iterating over each row of perturbation
-    pred_perturbed_list = []
+    pred_perturbed_dict = {f'strategy_{i+1}': [] for i in range(len(perturbation))}
     for i in range(len(perturbation)):
         perturbed_patch = apply_perturbation(
             X_test, perturbation.iloc[i], dataset.channel_names
         )
         pred_perturbed = model(perturbed_patch) > classify_threshold
-        pred_perturbed_list.append(pred_perturbed)
-        print(f"perturbed {i} = {(pred_perturbed).mean():.3f}")
+        pred_perturbed_dict[f'strategy_{i+1}'] = pred_perturbed
+        print(f"strategy_{i+1}= {(pred_perturbed).mean():.3f}")
 
     # map each patch to patient
     pre_post_df = pd.DataFrame(
@@ -373,10 +373,156 @@ def assess_perturbation(
             "patch_id": test_metadata["patch_id"],
             "true_orig": y_test,
             "pred_orig": pred_orig,
-            "strategy_1": pred_perturbed_list[0],
-            "strategy_2": pred_perturbed_list[1],
         }
     )
+    # add strategy columns to pre_post_df
+    for key, value in pred_perturbed_dict.items():
+        pre_post_df[key] = value
     pre_post_df = pre_post_df.merge(test_metadata, on="patch_id", how="left")
 
     return pre_post_df
+
+
+def _compute_differential_analysis(partitioned_dfs, compare):
+    """
+    Helper function to compute differential analysis.
+
+    Parameters:
+    - column (list): List of column names.
+    - compare (str): Comparison type, "gene" or "celltype".
+
+    Returns:
+    - plot_df (pd.DataFrame): DataFrame containing results for the differential analysis.
+    """
+    results = {"log2(fold_change)": [], "g1_mean": [], "g2_mean": [], "p_values": []}
+    column = [col for col in partitioned_dfs[1].columns if col != "ImageNumber"]
+
+    for item in column:
+        val_to_compare = {}
+        for key, df in partitioned_dfs.items():
+            val_to_compare[key] = (
+                df[item].dropna()
+                if compare == "gene"
+                else df.groupby("ImageNumber").mean()[item].dropna()
+            )
+
+        fold_change = np.mean(val_to_compare[1]) / np.mean(val_to_compare[2])
+        results["log2(fold_change)"].append(np.log2(fold_change + 1e-30))
+        results["g1_mean"].append(np.mean(val_to_compare[1]))
+        results["g2_mean"].append(np.mean(val_to_compare[2]))
+
+        _, p_value = stats.ranksums(val_to_compare[1], val_to_compare[2])
+        results["p_values"].append(p_value)
+
+    _, p_values_adj, _, _ = multitest.multipletests(results["p_values"], method="sidak")
+    plot_df = pd.DataFrame(
+        {
+            compare: column,
+            "log2(fold_change)": results["log2(fold_change)"],
+            "g1_mean": results["g1_mean"],
+            "g2_mean": results["g2_mean"],
+            "-log10(p_value_adj)": [
+                -np.log10(val) if val != 0 else 300 for val in p_values_adj
+            ],
+        }
+    )
+    return plot_df
+
+
+def differential_analysis_celltype(dataset, patient_cf_crc):
+    """
+    Perform differential analysis between cell types.
+
+    Returns:
+    - plot_df (pd.DataFrame): DataFrame containing results for the differential analysis.
+    """
+    # get patientid (index) belonging to each cluster using patient_cf_crc
+    cluster_patient = {}
+    for i in np.unique(patient_cf_crc["cluster"]):
+        cluster_patient[i] = patient_cf_crc[
+            patient_cf_crc["cluster"] == i
+        ].index.tolist()
+
+    # get single cell df
+    singlecell_df = pd.read_csv(dataset.input_path, low_memory=False)
+
+    # get cell type distribution
+    cellcount_df = singlecell_df.pivot_table(
+        index="ImageNumber", columns="CellType", aggfunc="size", fill_value=0
+    ).reset_index()
+
+    # filter out normal tissues
+    if "type" in singlecell_df.columns:
+        singlecell_df = singlecell_df[singlecell_df["type"] != "Nor"]
+
+    # partition the dataframe
+    partitioned_dfs = partition_dataframe(singlecell_df, cellcount_df, cluster_patient)
+
+    return _compute_differential_analysis(partitioned_dfs, compare="celltype")
+
+
+def differential_analysis_genes(dataset, patient_cf, channel_to_perturb):
+    """
+    Perform differential analysis between genes.
+
+    Returns:
+    - plot_df (pd.DataFrame): DataFrame containing results for the differential analysis.
+    """
+    # get patientid (index) belonging to each cluster
+    cluster_patient = {}
+    for i in np.unique(patient_cf["cluster"]):
+        cluster_patient[i] = patient_cf[patient_cf["cluster"] == i].index.tolist()
+
+    # get single cell df
+    X, _, _metadata = load_data_split(
+        dataset,
+        data_split="train",
+        remove_healthy=True,
+        remove_small_images=False,
+        remove_few_tumor_cells=False,
+        additional_col=[],
+        parallel=False,
+    )
+
+    X = X.sum(axis=(1, 2))
+    X = pd.DataFrame(X, columns=dataset.channel_names)
+    gene_df = X[channel_to_perturb]
+    gene_df = pd.concat(
+        [_metadata["ImageNumber"].reset_index(drop=True), gene_df], axis=1
+    )
+    # remove rows with all zeros
+    gene_df = gene_df[(gene_df[channel_to_perturb] != 0).any(axis=1)]
+
+    # partition the dataframe
+    partitioned_dfs = partition_dataframe(_metadata, gene_df, cluster_patient)
+
+    return _compute_differential_analysis(partitioned_dfs, compare="gene")
+
+
+def partition_dataframe(tumor_df, val_df, cluster_patient):
+    partition = {}
+    for key, patientlist in cluster_patient.items():
+        imgnum = tumor_df[(tumor_df["PatientID"].isin(patientlist))][
+            "ImageNumber"
+        ].unique()
+        partition[key] = val_df[val_df["ImageNumber"].isin(imgnum)]
+    return partition
+
+
+def get_IHC_subset(mla_data, channel_to_perturb_mla):
+    X, y, _metadata = load_data_split(mla_data, "train", additional_col=["IHC_T_score"])
+    mean_intensity = X.mean(axis=(1, 2))
+    df = pd.DataFrame(mean_intensity, columns=mla_data.channel_names)
+    df_normalized = np.arcsinh(df.div(df.sum(axis=1), axis=0))
+
+    # Get the index of rows that do not contain NaN or infinite values
+    valid_rows = np.isfinite(df_normalized).all(axis=1)
+    print(np.sum(~valid_rows))
+    df_normalized = df_normalized[valid_rows]
+    label = _metadata[valid_rows]
+    df_chemokine = df_normalized.loc[:, channel_to_perturb_mla]
+
+    dfSUBSET = df_chemokine[label["IHC_T_score"].isin(["I", "D", "E/D"])]
+    labelSUBSET = label[label["IHC_T_score"].isin(["I", "D", "E/D"])]
+
+    return dfSUBSET, labelSUBSET
