@@ -204,9 +204,9 @@ def load_classifier(dataset, mu, stdev):
 def get_data_and_model(
     dataset: SpatialDataset,
     data_split: Union[str, List[str]],
-    remove_healthy: bool = True,
-    remove_small_images: bool = True,
-    remove_few_tumor_cells: bool = True,
+    remove_healthy: bool = False,
+    remove_small_images: bool = False,
+    remove_few_tumor_cells: bool = False,
     additional_col: list = [],
     data_only: bool = False,
     pallalel: bool = False,

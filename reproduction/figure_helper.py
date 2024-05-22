@@ -65,6 +65,7 @@ def plot_rmse(all_rmse):
     # show the plot
     plt.show()
 
+
 def get_upper_thresh(mla_data):
     X, _, _metadata = load_data_split(
         mla_data,
@@ -74,8 +75,10 @@ def get_upper_thresh(mla_data):
         remove_few_tumor_cells=False,
         parallel=False,
     )
-    q75, q25 = np.percentile(np.mean(X, axis=(1,2)), [75 ,25], axis=0) # determine thres based on IQR of original data
-    return np.max((q75 - q25)/q25) * 1.5 * 100
+    q75, q25 = np.percentile(
+        np.mean(X, axis=(1, 2)), [75, 25], axis=0
+    )  # determine thres based on IQR of original data
+    return np.max((q75 - q25) / q25) * 1.5 * 100
 
 
 def plot_patient_perturbation(
@@ -95,14 +98,16 @@ def plot_patient_perturbation(
         rel_perturbation = rel_perturbation[rel_perturbation["type"] != "Nor"]
 
     # Filter out rows with extreme perturbations
-    if set_thresh: 
+    if set_thresh:
         thresh = get_upper_thresh(dataset) # set thresh based on IQR of original data
     else: # precomputed for example dataset
         thresh = 79*100
     upper_bound = np.maximum(np.median(rel_perturbation[channel_to_perturb].quantile(0.99)), thresh) # use maximum to be conservative with filter
-    lower_bound = np.maximum(np.median(rel_perturbation[channel_to_perturb].quantile(0.01)), -100)
+    lower_bound = np.minimum(np.median(rel_perturbation[channel_to_perturb].quantile(0.01)), -101)
+    print(upper_bound)
+    print(lower_bound)
     to_keep = (rel_perturbation[channel_to_perturb] <= upper_bound).all(axis=1) & (rel_perturbation[channel_to_perturb] >= lower_bound).all(axis=1)
-    rel_perturbation = rel_perturbation[to_keep] 
+    rel_perturbation = rel_perturbation[to_keep]
 
     # Plot the perturbation of each patient
     patient_cf = (

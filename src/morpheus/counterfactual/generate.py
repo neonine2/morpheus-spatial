@@ -28,9 +28,7 @@ def get_counterfactual(
     dataset: SpatialDataset,
     target_class: int,
     model_path: str,
-    channel_to_perturb: list,
     optimization_params: dict,
-    threshold: float = 0.5,
     kdtree_path: str = None,
     save_dir: str = None,
     num_workers: int = 1,
@@ -47,10 +45,8 @@ def get_counterfactual(
         dataset (SpatialDataset): Dataset to generate counterfactuals for.
         target_class (int): Target class for the counterfactuals.
         model (torch.nn.Module): Model to generate counterfactuals for.
-        channel_to_perturb (list): List of channels to perturb.
         optimization_params (dict): Dictionary containing the parameters for the optimization.
         images (pd.DataFrame, optional): Images to generate counterfactuals for. Defaults to None.
-        threshold (float, optional): Threshold for the prediction probability. Defaults to 0.5.
         kdtree_path (str, optional): Path to the kdtree file. Defaults to None.
         save_dir (str, optional): Directory where output will be saved. Defaults to None.
         num_workers (bool, optional): Number of workers to use for parallel processing. Defaults to None.
@@ -60,6 +56,9 @@ def get_counterfactual(
         device (str, optional): Device to use for computation. Defaults to None.
         model_kwargs (dict, optional): Additional keyword arguments for the model. Defaults to {}.
     """
+    # Set default values
+    threshold = optimization_params.pop("threshold", 0.5)
+    channel_to_perturb = optimization_params.pop("channel_to_perturb", None)
 
     # set default tensor type to cuda if available
     torch.set_default_tensor_type(
@@ -109,7 +108,6 @@ def get_counterfactual(
         "verbosity": verbosity,
         "optimization_params": optimization_params,
         "save_dir": save_dir,
-        "threshold": threshold,
         "device": device,
         "model_kwargs": model_kwargs,
     }
@@ -145,7 +143,7 @@ def get_counterfactual(
         .cpu()
         .numpy()[0, 1]
         > threshold
-        for args in tqdm(image_args)
+        for args in tqdm(image_args, miniters=100)
     ]
     image_args = [args for i, args in enumerate(image_args) if not discard_mask[i]]
 
@@ -178,7 +176,7 @@ def get_counterfactual(
         ]
 
         # Use tqdm to display a progress bar
-        with tqdm(total=len(image_args)) as pbar:
+        with tqdm(total=len(image_args), miniters=100) as pbar:
             # Retrieve the results as they become available
             results = []
             while cf_refs:
@@ -213,7 +211,6 @@ def generate_one_cf(
     verbosity: int = 0,
     optimization_params: dict = None,
     save_dir: str = None,
-    threshold: float = 0.5,
     device: str = None,
     model_kwargs: Optional[dict] = {},
 ) -> None:
@@ -230,7 +227,6 @@ def generate_one_cf(
          optimization_params (dict, optional): Dictionary containing the parameters for the optimization. Defaults to {}.
          save_dir (str, optional): Directory where output will be saved. Defaults to None.
          patch_id (int, optional): Patch ID. Defaults to None.
-         threshold (float, optional): Threshold for the prediction probability. Defaults to 0.5.
          device (str, optional): Device to use for computation. Defaults to None.
          model_kwargs (dict, optional): Additional keyword arguments for the model. Defaults to {}.
 

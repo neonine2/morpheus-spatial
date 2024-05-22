@@ -349,8 +349,7 @@ class SpatialDataset:
         if given_split is not None:
             if SpatialDataset.issplitvalid(given_split):
                 patient_split = {
-                    name.value: np.array(given_split[idx])
-                    for idx, name in enumerate(Splits)
+                    name: np.array(spt) for name, spt in given_split.items()
                 }
             else:
                 raise ValueError("Given split is not valid")
@@ -586,11 +585,11 @@ class SpatialDataset:
             raise ValueError(
                 "Given split should contain three lists of patient IDs for train, validation, and test splits"
             )
-        if len(set(split[0]) & set(split[1])) > 0:
+        if len(set(split[Splits.train.value]) & set(split[Splits.validate.value])) > 0:
             raise ValueError("Train and validation splits contain the same patient IDs")
-        if len(set(split[0]) & set(split[2])) > 0:
+        if len(set(split[Splits.train.value]) & set(split[Splits.test.value])) > 0:
             raise ValueError("Train and test splits contain the same patient IDs")
-        if len(set(split[1]) & set(split[2])) > 0:
+        if len(set(split[Splits.validate.value]) & set(split[Splits.test.value])) > 0:
             raise ValueError("Validation and test splits contain the same patient IDs")
         return True
 
