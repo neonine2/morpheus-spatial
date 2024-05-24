@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
-from matplotlib import colors
+from matplotlib import colors, cm
 import matplotlib.lines as mlines
 import scipy.cluster.hierarchy as sch
 from sklearn.linear_model import LinearRegression
@@ -10,8 +10,7 @@ from random import shuffle
 from scipy.stats import t
 from analysis_helper import load_data_split
 
-
-def plot_prediction_scatterplot(pred_df: pd.DataFrame):
+def plot_prediction_scatterplot(pred_df: pd.DataFrame, save_fig: bool = False):
     _, ax = plt.subplots(figsize=(6, 6))
     color = ["deeppink", "forestgreen", "slateblue"]
     x = np.linspace(0, 1, 100)
@@ -31,19 +30,27 @@ def plot_prediction_scatterplot(pred_df: pd.DataFrame):
             0.7,
             0.19 - i * 0.08,
             "R² = {:.2f}".format(r_sq),
-            fontsize=11,
+            fontsize=18,
             c=color[i],
         )
 
-    ax.legend(frameon=False)
+    ax.legend(frameon=False, fontsize=14)
     ax.plot([0, 1], [0, 1], c="black")
     # set aspect ratio to 1
-    plt.xlabel("True proportion of patches with T cells", fontsize=12)
-    plt.ylabel("Predict proportion of patches with T cells", fontsize=12)
+    plt.xlabel("True proportion of patches with T cells", fontsize=16)
+    plt.ylabel("Predict proportion of patches with T cells", fontsize=16)
+
+    # increase tick label font size
+    ax.tick_params(axis="both", which="major", labelsize=13)
+
+    if save_fig:
+        plt.savefig(
+            "prediction_scatterplot.svg", format="svg", dpi=300, bbox_inches="tight"
+        )
     plt.show()
 
 
-def plot_rmse(all_rmse):
+def plot_rmse(all_rmse, save_fig: bool = False):
     # Create a sample DataFrame
     rmse = {
         "U-Net": [all_rmse["Melanoma"], all_rmse["CRC"], all_rmse["Breast tumor"]],
@@ -55,12 +62,18 @@ def plot_rmse(all_rmse):
     _ = df.plot(kind="bar", figsize=(6, 6))
 
     # add title and labels
-    plt.xlabel("Tumor Type")
+    plt.xlabel("Tumor Type", fontsize=16)
     plt.xticks(rotation=0)
-    plt.ylabel("Root Mean Squared Error (RMSE)")
+    plt.ylabel("Root Mean Squared Error (RMSE)", fontsize=16)
 
     # move legend outside the plot to the right
-    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+    plt.legend(loc="center left", bbox_to_anchor=(1, 0.5), fontsize=14)
+
+    # increase tick label font size
+    plt.tick_params(axis="both", which="major", labelsize=16)
+
+    if save_fig:
+        plt.savefig("rmse_barplot.svg", format="svg", dpi=300, bbox_inches="tight")
 
     # show the plot
     plt.show()
@@ -99,14 +112,20 @@ def plot_patient_perturbation(
 
     # Filter out rows with extreme perturbations
     if set_thresh:
-        thresh = get_upper_thresh(dataset) # set thresh based on IQR of original data
-    else: # precomputed for example dataset
-        thresh = 79*100
-    upper_bound = np.maximum(np.median(rel_perturbation[channel_to_perturb].quantile(0.99)), thresh) # use maximum to be conservative with filter
-    lower_bound = np.minimum(np.median(rel_perturbation[channel_to_perturb].quantile(0.01)), -101)
+        thresh = get_upper_thresh(dataset)  # set thresh based on IQR of original data
+    else:  # precomputed for example dataset
+        thresh = 79 * 100
+    upper_bound = np.maximum(
+        np.median(rel_perturbation[channel_to_perturb].quantile(0.99)), thresh
+    )  # use maximum to be conservative with filter
+    lower_bound = np.minimum(
+        np.median(rel_perturbation[channel_to_perturb].quantile(0.00)), -101
+    )
     print(upper_bound)
     print(lower_bound)
-    to_keep = (rel_perturbation[channel_to_perturb] <= upper_bound).all(axis=1) & (rel_perturbation[channel_to_perturb] >= lower_bound).all(axis=1)
+    to_keep = (rel_perturbation[channel_to_perturb] <= upper_bound).all(axis=1) & (
+        rel_perturbation[channel_to_perturb] >= lower_bound
+    ).all(axis=1)
     rel_perturbation = rel_perturbation[to_keep]
 
     # Plot the perturbation of each patient
@@ -145,7 +164,7 @@ def plot_patient_perturbation(
         metric="correlation",
         xticklabels=[x[:-5] if x.endswith("_mRNA") else x for x in channel_to_perturb],
         # yticklabels=False,
-        norm=colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax / 4 + 1),
+        norm=colors.TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax / 5 + 1),
         figsize=(8, 8),
     )
 
@@ -185,6 +204,7 @@ def plot_patient_perturbation(
 
         # draw line as x = 0
         ax[ii].axhline(0, color="black")
+        ax[ii].set_ylabel("Median change (%)")
 
     if save_fig:
         plt.savefig("cluster_median.svg", format="svg", dpi=300, bbox_inches="tight")
@@ -300,7 +320,7 @@ def plot_perturbation_performance(
         )
 
     elif patient_phenotype == "FLD":  # crc dataset
-        plot_two_vertical_bar(
+        tcell_level_patient = plot_two_vertical_bar(
             tcell_level_patient,
             tcell_level_image,
             patient_phenotype,
@@ -309,7 +329,7 @@ def plot_perturbation_performance(
             save_fig,
         )
 
-    return
+    return tcell_level_patient
 
 
 def plot_horizontal_bar(
@@ -554,6 +574,8 @@ def plot_two_vertical_bar(
         plt.savefig("efficacy_bar_plot.svg", format="svg", dpi=300, bbox_inches="tight")
     plt.show()
 
+    return tcell_level_image_subset
+
 
 def make_line_plots(
     tcell_level_image,
@@ -617,7 +639,7 @@ def make_line_plots(
     plt.show()
 
 
-def plot_umap_embedding_crc(embedding_df, umap_cf):
+def plot_umap_embedding_crc(embedding_df, umap_cf, save_fig: bool = False):
     plt.figure(figsize=(8, 5))
     noTcell = (embedding_df["Contains_Tcytotoxic"] == 0) & (
         embedding_df["Contains_Tumor"] == 1
@@ -695,16 +717,18 @@ def plot_umap_embedding_crc(embedding_df, umap_cf):
     ax = plt.gca()
     ax.invert_xaxis()
     ax.invert_yaxis()
+    if save_fig:
+        plt.savefig("umap_embedding_crc.png", dpi=300, bbox_inches="tight")
     plt.show()
 
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(8, 5), facecolor='white')
     plt.scatter(
         x=umap_cf["orig_umap1"],
         y=umap_cf["orig_umap2"],
         s=0.2,
-        c="tab:red",
+        c="#EE4B2B",
         label="No T cells",
-        alpha=0.6,
+        alpha=0.8,
     )
 
     plt.scatter(
@@ -716,7 +740,7 @@ def plot_umap_embedding_crc(embedding_df, umap_cf):
         alpha=0.8,
     )
 
-    for i in range(0, len(umap_cf), 3):
+    for i in range(0, len(umap_cf)):
         plt.arrow(
             umap_cf["orig_umap1"][i],
             umap_cf["orig_umap2"][i],
@@ -733,7 +757,7 @@ def plot_umap_embedding_crc(embedding_df, umap_cf):
         mlines.Line2D(
             [0],
             [0],
-            color="tab:red",
+            color="#EE4B2B",
             marker="o",
             linestyle="None",
             markersize=5,
@@ -754,6 +778,9 @@ def plot_umap_embedding_crc(embedding_df, umap_cf):
     ax.invert_xaxis()
     ax.invert_yaxis()
     plt.axis("off")  # Turn off the axis
+    # add white background
+    if save_fig:
+        plt.savefig("umap_embedding_cf_crc.png", dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -828,6 +855,7 @@ def plot_umap_embedding(
     # Get the labels of the clusters
     cluster_labels = kmeans.labels_
     label_counts = np.bincount(cluster_labels)
+    print(label_counts)
 
     plt.figure(figsize=(8, 5))
     plt.scatter(
@@ -845,8 +873,8 @@ def plot_umap_embedding(
         "tab:orange",
         "darkgray",
         "darkgray",
-        "darkgray",
         "tab:purple",
+        "darkgray",
         "darkgray",
         "tab:green",
     ]
@@ -985,6 +1013,7 @@ def plot_data(ax, plot_df, names, p_cutoff, strat2_color, strat1_color):
             ha="left",
         )
     ax.set_yscale("log")
+    ax.tick_params(axis="both", which="major", labelsize=12)
 
 
 def make_volcano_plot(
@@ -1009,13 +1038,16 @@ def make_volcano_plot(
     """
     # Setup the figure and subplots
     fig, axes = plt.subplots(
-        nrows=1, ncols=2, figsize=(7, 3.65)
+        nrows=1, ncols=2, figsize=(5.8, 3.65)
     )  # Adjust the figure size as needed
 
     # Plot the first dataframe
     # remove gene named CXCL12_mRNA from gene_df
     gene_df = gene_df[~gene_df["gene"].isin(["CXCL12_mRNA", "CCL8_mRNA"])]
     plot_data(axes[0], gene_df, gene_df["gene"], p_cutoff, strat2_color, strat1_color)
+
+    # remove unclassified celltypes
+    celltype_df = celltype_df[celltype_df["celltype"] != 'Unclassified'].reset_index()
 
     # Plot the second dataframe
     plot_data(
@@ -1046,14 +1078,14 @@ def make_volcano_plot(
         fontsize=14,
     )  # Central y-axis label
     # set ylim
-
+    plt.tick_params(axis="both", which="major", labelsize=12)
     plt.tight_layout()  # Adjust subplots to fit into figure area.
     if save_fig:
         plt.savefig("volcano_plot.svg", format="svg", dpi=300, bbox_inches="tight")
     plt.show()
 
 
-def plot_tissue_level_perturbation(cf_df, channel_to_perturb):
+def plot_tissue_level_perturbation(cf_df, channel_to_perturb, save_fig: bool = False):
 
     nrow_per_image = cf_df.groupby("ImageNumber").size()
 
@@ -1125,8 +1157,8 @@ def plot_tissue_level_perturbation(cf_df, channel_to_perturb):
         row_colors=ordered_row_colors,
         figsize=(10, 10),
     )
-
-    # Display the plot
+    if save_fig:
+        plt.savefig("tissue_level_heatmap.svg", format="svg", dpi=300, bbox_inches="tight")
     plt.show()
 
 
@@ -1213,7 +1245,7 @@ def make_multi_strat_plot(
     infiltrate_mean = img_mean.mean()
 
     # Calculate Standard Error of the Mean (SEM)
-    sem = img_mean.std(ddof=1) / np.sqrt(img_mean.count())
+    sem = np.std(img_mean) / np.sqrt(img_mean.count())
 
     # Confidence Interval Bounds
     infiltrate_lower = infiltrate_mean - t.ppf(0.975, df=img_mean.count() - 1) * sem
@@ -1261,9 +1293,9 @@ def make_multi_strat_plot(
     current_values = ax.get_yticks()
     ax.set_yticklabels(["{:,.0%}".format(x) for x in current_values])
     plt.legend(frameon=False, fontsize="12")
-    plt.show()
-
-    from matplotlib import colors, cm
+    # if save_fig:
+    #     plt.savefig("multi_strat_efficacy.svg", format="svg", dpi=300, bbox_inches="tight")
+    # plt.show()
 
     plt.subplot(212, aspect=4)
     # select a divergent colormap
@@ -1305,4 +1337,17 @@ def make_multi_strat_plot(
     )  # vertically oriented colorbar
     cbar.set_label("Tumor perturbation (%)", rotation=270, fontsize=8)
     plt.ylabel("Perturbed \n target(s)")
+    if save_fig:
+        plt.savefig("multi_strat.svg", format="svg", dpi=300, bbox_inches="tight")
+
+    plt.show()
+    return infiltrate_lower, infiltrate_upper
+
+def plot_correlation(sorted_results, save_fig=False):
+    plt.figure(figsize=(16,3.4))
+    plt.bar(sorted_results['Variable'], sorted_results['Correlation'], color='tab:gray')
+    plt.xticks(rotation=70, fontsize=26)
+    plt.yticks(fontsize=24)
+    if save_fig:
+        plt.savefig('correlation_barplot.svg', dpi=300, bbox_inches="tight")
     plt.show()

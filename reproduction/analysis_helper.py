@@ -9,7 +9,6 @@ import scipy.stats as stats
 from statsmodels.stats import multitest
 from morpheus import SpatialDataset, load_model
 
-
 def get_rmse_and_prediction(dataset, split, classify_threshold=0.5):
     X, y, test_metadata, model = get_data_and_model(
         dataset,
@@ -358,13 +357,13 @@ def assess_perturbation(
     print("original (true) = %.3f" % y_test.mean())
 
     # perturb image patch by iterating over each row of perturbation
-    pred_perturbed_dict = {f'strategy_{i+1}': [] for i in range(len(perturbation))}
+    pred_perturbed_dict = {f"strategy_{i+1}": [] for i in range(len(perturbation))}
     for i in range(len(perturbation)):
         perturbed_patch = apply_perturbation(
             X_test, perturbation.iloc[i], dataset.channel_names
         )
         pred_perturbed = model(perturbed_patch) > classify_threshold
-        pred_perturbed_dict[f'strategy_{i+1}'] = pred_perturbed
+        pred_perturbed_dict[f"strategy_{i+1}"] = pred_perturbed
         print(f"strategy_{i+1}= {(pred_perturbed).mean():.3f}")
 
     # map each patch to patient
@@ -414,7 +413,9 @@ def _compute_differential_analysis(partitioned_dfs, compare):
         _, p_value = stats.ranksums(val_to_compare[1], val_to_compare[2])
         results["p_values"].append(p_value)
 
-    _, p_values_adj, _, _ = multitest.multipletests(results["p_values"], method="sidak")
+    _, p_values_adj, _, _ = multitest.multipletests(
+        results["p_values"], method="sidak"
+    )
     plot_df = pd.DataFrame(
         {
             compare: column,
@@ -422,7 +423,8 @@ def _compute_differential_analysis(partitioned_dfs, compare):
             "g1_mean": results["g1_mean"],
             "g2_mean": results["g2_mean"],
             "-log10(p_value_adj)": [
-                -np.log10(val) if val != 0 else 300 for val in p_values_adj
+                -np.log10(val) if val != 0 else 300
+                for val in p_values_adj  # avoid log(0) and extreme insignificant values
             ],
         }
     )
@@ -526,3 +528,22 @@ def get_IHC_subset(mla_data, channel_to_perturb_mla):
     labelSUBSET = label[label["IHC_T_score"].isin(["I", "D", "E/D"])]
 
     return dfSUBSET, labelSUBSET
+
+
+def get_feature_correlation(dataset, channel_to_perturb):
+    X, y, metadata = load_data_split(dataset, data_split="train")
+
+    total_intensity = pd.DataFrame(X.sum(axis=(1,2)), columns=dataset.channel_names)[channel_to_perturb]
+    label = pd.Series([1 if ii else 0 for ii in y])
+
+    # Calculate point-biserial correlation for each column
+    results = []
+    for column in total_intensity.columns:
+        correlation, _ = stats.pointbiserialr(label, total_intensity[column])
+        results.append({'Variable': column, 'Correlation': correlation})
+
+    # Create a DataFrame from the results and sort it
+    results_df = pd.DataFrame(results)
+    sorted_results = results_df.sort_values(by='Correlation', ascending=False)
+
+    return sorted_results

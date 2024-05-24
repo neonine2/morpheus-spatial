@@ -100,17 +100,17 @@ def main(
 
 
 if __name__ == "__main__":
-    BASE = "/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/new2"  # change to your own directory
+    BASE = "/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/final"  # change to your own directory
     optimization_param = {
         "use_kdtree": True,
         "theta": 60.0,
         "kappa": -0.7,
         "learning_rate_init": 0.1,
-        "beta": 2,
+        "beta": 5,
         "max_iterations": 1000,
         "c_init": 25000.0,
         "c_steps": 5,
-        "threshold": 0.34,
+        "threshold": 0.31,
         "numerical_diff": False,
         "channel_to_perturb": [
             "CCL4_mRNA",
@@ -129,6 +129,6 @@ if __name__ == "__main__":
     main(
         data_path=f"{BASE}/singlecell.csv",
         additional_cols=["Cancer_Stage", "IHC_T_score"],
-        cf_dir=f"{BASE}/cf/run_0",
+        cf_dir=f"{BASE}/cf/run_5",
         optimization_param=optimization_param,
     )
