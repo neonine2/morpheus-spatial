@@ -41,8 +41,6 @@ See `tutorial_notebook.ipynb` for a complete workflow on using Morpheus to gener
 
 
 ### Repository Structure
-## Repository Structure
-
 - **`assets/`**: Contains images and other assets used in the documentation and the project.
 - **`src/`**: The main package directory containing all core modules and functions.
 - **`reproduction/`**: Includes Jupyter notebooks and scripts for reproducing the main analyses presented in the associated research paper.
