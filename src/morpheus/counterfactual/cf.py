@@ -39,7 +39,7 @@ class Counterfactual(Explainer, FitMixin):
         update_num_grad: int = 1,
         trustscore: Optional[str] = None,
         verbosity: int = 0,
-        numerical_diff: bool = True,
+        numerical_diff: bool = False,
         device: str = None,
     ) -> None:
         """

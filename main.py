@@ -106,12 +106,11 @@ if __name__ == "__main__":
         "theta": 60.0,
         "kappa": -0.7,
         "learning_rate_init": 0.1,
-        "beta": 5,
+        "beta": 0.3,
         "max_iterations": 1000,
         "c_init": 25000.0,
         "c_steps": 5,
         "threshold": 0.31,
-        "numerical_diff": False,
         "channel_to_perturb": [
             "CCL4_mRNA",
             "CCL18_mRNA",
@@ -129,6 +128,6 @@ if __name__ == "__main__":
     main(
         data_path=f"{BASE}/singlecell.csv",
         additional_cols=["Cancer_Stage", "IHC_T_score"],
-        cf_dir=f"{BASE}/cf/run_5",
+        cf_dir=f"{BASE}/cf/run_0p3",
         optimization_param=optimization_param,
     )

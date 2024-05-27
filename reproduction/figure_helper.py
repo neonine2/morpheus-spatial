@@ -8,7 +8,9 @@ import scipy.cluster.hierarchy as sch
 from sklearn.linear_model import LinearRegression
 from random import shuffle
 from scipy.stats import t
-from analysis_helper import load_data_split
+from analysis_helper import load_data_split, get_data_and_model
+import h5py
+
 
 def plot_prediction_scatterplot(pred_df: pd.DataFrame, save_fig: bool = False):
     _, ax = plt.subplots(figsize=(6, 6))
@@ -102,6 +104,7 @@ def plot_patient_perturbation(
     extra_cols: list = [],
     save_fig: bool = False,
     set_thresh: bool = True,
+    keep_top_2: bool = True,
 ):
     """
     Plot the perturbation of each patient as well as the median perturbation of each cluster of patients
@@ -121,8 +124,6 @@ def plot_patient_perturbation(
     lower_bound = np.minimum(
         np.median(rel_perturbation[channel_to_perturb].quantile(0.00)), -101
     )
-    print(upper_bound)
-    print(lower_bound)
     to_keep = (rel_perturbation[channel_to_perturb] <= upper_bound).all(axis=1) & (
         rel_perturbation[channel_to_perturb] >= lower_bound
     ).all(axis=1)
@@ -178,17 +179,22 @@ def plot_patient_perturbation(
             on="PatientID",
             how="left",
         )
+    clusters = sch.fcluster(axe.dendrogram_row.linkage, numClust, "maxclust")
+    grouped_cf["cluster"] = clusters
 
     # Plot the median perturbation of each cluster of patients
-    clusters = sch.fcluster(axe.dendrogram_row.linkage, numClust, "maxclust")
+    if keep_top_2:
+        top_two_clusters = grouped_cf["cluster"].value_counts().nlargest(2).index
+        grouped_cf = grouped_cf[grouped_cf["cluster"].isin(top_two_clusters)]
+        grouped_cf["cluster"] = grouped_cf["cluster"] - 1
+        numClust = grouped_cf["cluster"].nunique()
 
     _, ax = plt.subplots(numClust, 1, figsize=(8, numClust * 1.5))
     strategy_cluster = []
-    # add a column to grouped_cf to store the cluster number
-    grouped_cf["cluster"] = clusters
     for ii in range(numClust):
-        c = np.array(grouped_cf.index[clusters == ii + 1])
-        med_strat = np.median(grouped_cf.loc[c, channel_to_perturb], axis=0)
+        med_strat = np.median(
+            grouped_cf.loc[grouped_cf["cluster"] == ii + 1, channel_to_perturb], axis=0
+        )
         med_strat[abs(med_strat) < 5] = 0
         strategy_cluster.append(med_strat)
         ax[ii].bar(
@@ -219,7 +225,8 @@ def plot_patient_perturbation(
     return strategy_cluster, grouped_cf
 
 
-def aggregate_performance_per_patient(tcell_level, patient_phenotype):
+def aggregate_performance_per_patient(tcell_level, patient_phenotype=None):
+    patient_phenotype = "splits" if patient_phenotype is None else patient_phenotype
     # if 'type' is in tcell_level, add {"type": "first"} to the groupby
     agg = {
         "true_orig": "mean",
@@ -250,14 +257,22 @@ def aggregate_performance_per_patient(tcell_level, patient_phenotype):
             tcell_level_patient[col + "_q3"] = tcell_level_image.groupby("PatientID")[
                 col
             ].quantile(0.75)
+    elif patient_phenotype == "splits":
+        for col in ["true_orig", "strategy_1", "strategy_2"]:
+            tcell_level_patient[col + "_q1"] = tcell_level_image.groupby("PatientID")[
+                col
+            ].quantile(0.25)
+            tcell_level_patient[col + "_q3"] = tcell_level_image.groupby("PatientID")[
+                col
+            ].quantile(0.75)
 
     return tcell_level_patient, tcell_level_image
 
 
 def plot_perturbation_performance(
     tcell_level: pd.DataFrame,
-    patient_phenotype: str,
-    strategy_mapping: dict,
+    patient_phenotype: str = None,
+    strategy_mapping: dict = None,
     strat2_color="#2ba02c",
     strat1_color="#faaf40",
     save_fig: bool = False,
@@ -268,22 +283,24 @@ def plot_perturbation_performance(
     )
 
     # map each patient to a strategy based on the patient_phenotype and strategy_mapping
-    tcell_level_patient["pred_perturbed"] = tcell_level_patient.apply(
-        lambda x: (
-            x["strategy_1"]
-            if x[patient_phenotype] == strategy_mapping["strategy_1"]
-            else x["strategy_2"]
-        ),
-        axis=1,
-    )
-    tcell_level_image["pred_perturbed"] = tcell_level_image.apply(
-        lambda x: (
-            x["strategy_1"]
-            if x[patient_phenotype] == strategy_mapping["strategy_1"]
-            else x["strategy_2"]
-        ),
-        axis=1,
-    )
+    if strategy_mapping is not None:
+        tcell_level_patient["pred_perturbed"] = tcell_level_patient.apply(
+            lambda x: (
+                x["strategy_1"]
+                if x[patient_phenotype] == strategy_mapping["strategy_1"]
+                else x["strategy_2"]
+            ),
+            axis=1,
+        )
+        tcell_level_image["pred_perturbed"] = tcell_level_image.apply(
+            lambda x: (
+                x["strategy_1"]
+                if x[patient_phenotype] == strategy_mapping["strategy_1"]
+                else x["strategy_2"]
+            ),
+            axis=1,
+        )
+
     # group the tcell_level_image by type and patientID and take the median of true_orig and pred_perturbed
     tcell_level_image = tcell_level_image.reset_index()
 
@@ -309,17 +326,6 @@ def plot_perturbation_performance(
             .reset_index()
         )
 
-    if patient_phenotype == "Cancer_Stage":  # melanoma dataset
-        plot_horizontal_bar(
-            tcell_level_patient,
-            patient_phenotype,
-            strategy_mapping,
-            strat1_color,
-            strat2_color,
-            save_fig,
-        )
-
-    elif patient_phenotype == "FLD":  # crc dataset
         tcell_level_patient = plot_two_vertical_bar(
             tcell_level_patient,
             tcell_level_image,
@@ -329,15 +335,155 @@ def plot_perturbation_performance(
             save_fig,
         )
 
+    elif patient_phenotype == "Cancer_Stage":  # melanoma dataset
+        plot_horizontal_bar(
+            tcell_level_patient,
+            patient_phenotype,
+            strategy_mapping,
+            strat1_color,
+            strat2_color,
+            save_fig,
+        )
+
+    else:
+        plot_multi_horizontal_bar(
+            tcell_level_patient,
+            strat1_color,
+            strat2_color,
+            save_fig,
+        )
+
     return tcell_level_patient
+
+
+def plot_multi_horizontal_bar(
+    tcell_level_patient,
+    strat1_color="#faaf40",
+    strat2_color="#2ba02c",
+    save_fig: bool = False,
+):
+    # reorder the columns
+    tcell_level_patient = tcell_level_patient[
+        [
+            "true_orig",
+            "strategy_1",
+            "strategy_2",
+            "true_orig_q1",
+            "true_orig_q3",
+            "strategy_1_q1",
+            "strategy_1_q3",
+            "strategy_2_q1",
+            "strategy_2_q3",
+        ]
+    ]
+
+    # subtract the true_orig from the quantiles
+    tcell_level_patient["true_orig_q1"] = (
+        tcell_level_patient["true_orig"] - tcell_level_patient["true_orig_q1"]
+    )
+    tcell_level_patient["true_orig_q3"] = (
+        tcell_level_patient["true_orig_q3"] - tcell_level_patient["true_orig"]
+    )
+
+    # subtract the strategy_1 from the quantiles
+    tcell_level_patient["strategy_1_q1"] = (
+        tcell_level_patient["strategy_1"] - tcell_level_patient["strategy_1_q1"]
+    )
+    tcell_level_patient["strategy_1_q3"] = (
+        tcell_level_patient["strategy_1_q3"] - tcell_level_patient["strategy_1"]
+    )
+
+    # subtract the strategy_2 from the quantiles
+    tcell_level_patient["strategy_2_q1"] = (
+        tcell_level_patient["strategy_2"] - tcell_level_patient["strategy_2_q1"]
+    )
+    tcell_level_patient["strategy_2_q3"] = (
+        tcell_level_patient["strategy_2_q3"] - tcell_level_patient["strategy_2"]
+    )
+
+    # Sort the patients by the true_orig
+    tcell_level_patient = tcell_level_patient.sort_values(by="true_orig")
+    _, ax = plt.subplots(figsize=(6.2, 5))
+
+    colors = ["gray", strat1_color, strat2_color]
+    labels = ["Original", "Strategy 1", "Strategy 2"]
+
+    # Plot the T cell infiltration level of each patient
+    bars = tcell_level_patient.plot(
+        y=["true_orig", "strategy_1", "strategy_2"],
+        kind="barh",
+        ax=ax,
+        color={
+            "true_orig": "gray",
+            "strategy_1": strat1_color,
+            "strategy_2": strat2_color,
+        },
+        width=0.8,
+    )
+
+    # Adding error bars
+    for i, (_, row) in enumerate(tcell_level_patient.iterrows()):
+        if (
+            row["true_orig_q1"] != row["true_orig_q3"]
+            and row["strategy_1_q1"] != row["strategy_1_q3"]
+        ):
+            ax.errorbar(
+                x=[row["true_orig"], row["strategy_1"], row["strategy_2"]],
+                y=[
+                    i - 0.2,
+                    i,
+                    i + 0.2,
+                ],  # Adjust these positions based on your specific bar layout
+                xerr=[
+                    [
+                        tcell_level_patient.loc[_, "true_orig_q1"],
+                        tcell_level_patient.loc[_, "strategy_1_q1"],
+                        tcell_level_patient.loc[_, "strategy_2_q1"],
+                    ],  # Lower errors
+                    [
+                        tcell_level_patient.loc[_, "true_orig_q3"],
+                        tcell_level_patient.loc[_, "strategy_1_q3"],
+                        tcell_level_patient.loc[_, "strategy_2_q3"],
+                    ],
+                ],  # Upper errors
+                fmt="none",  # This removes any connecting lines
+                color="black",  # Error bar color
+                capsize=3,  #
+            )
+
+    # Moving the x-axis to the top of the plot
+    ax.xaxis.tick_top()  # Moves the ticks to the top
+    ax.xaxis.set_label_position("top")  # Moves the x-axis label to the top
+
+    # Move the x-axis line to the top
+    ax.spines["bottom"].set_visible(False)  # Hides the bottom spine
+    ax.spines["top"].set_visible(True)  # Makes sure the top spine is visible
+    ax.spines["top"].set_position(
+        ("outward", 0)
+    )  # Moves the top spine to the edge of the plot
+
+    plt.xlabel("T cell infiltration level")
+    plt.ylabel("Test patients")
+
+    ax.set_yticks(range(len(tcell_level_patient)))
+    ax.set_yticklabels([])
+    legend_handles = [plt.Rectangle((0, 0), 1, 1, color=color) for color in colors]
+    ax.legend(legend_handles, labels, loc="lower right")
+
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(
+            "efficacy_hbar_plot.svg", format="svg", dpi=300, bbox_inches="tight"
+        )
+    plt.show()
 
 
 def plot_horizontal_bar(
     tcell_level_patient,
     patient_phenotype,
-    strategy_mapping,
-    strat1_color,
-    strat2_color,
+    strategy_mapping=None,
+    strat1_color="#faaf40",
+    strat2_color="#2ba02c",
     save_fig: bool = False,
 ):
 
@@ -721,7 +867,7 @@ def plot_umap_embedding_crc(embedding_df, umap_cf, save_fig: bool = False):
         plt.savefig("umap_embedding_crc.png", dpi=300, bbox_inches="tight")
     plt.show()
 
-    plt.figure(figsize=(8, 5), facecolor='white')
+    plt.figure(figsize=(8, 5), facecolor="white")
     plt.scatter(
         x=umap_cf["orig_umap1"],
         y=umap_cf["orig_umap2"],
@@ -1038,16 +1184,14 @@ def make_volcano_plot(
     """
     # Setup the figure and subplots
     fig, axes = plt.subplots(
-        nrows=1, ncols=2, figsize=(5.8, 3.65)
+        nrows=1, ncols=2, figsize=(6.3, 3.65)
     )  # Adjust the figure size as needed
 
     # Plot the first dataframe
-    # remove gene named CXCL12_mRNA from gene_df
-    gene_df = gene_df[~gene_df["gene"].isin(["CXCL12_mRNA", "CCL8_mRNA"])]
     plot_data(axes[0], gene_df, gene_df["gene"], p_cutoff, strat2_color, strat1_color)
 
     # remove unclassified celltypes
-    celltype_df = celltype_df[celltype_df["celltype"] != 'Unclassified'].reset_index()
+    celltype_df = celltype_df[celltype_df["celltype"] != "Unclassified"].reset_index()
 
     # Plot the second dataframe
     plot_data(
@@ -1158,7 +1302,9 @@ def plot_tissue_level_perturbation(cf_df, channel_to_perturb, save_fig: bool = F
         figsize=(10, 10),
     )
     if save_fig:
-        plt.savefig("tissue_level_heatmap.svg", format="svg", dpi=300, bbox_inches="tight")
+        plt.savefig(
+            "tissue_level_heatmap.svg", format="svg", dpi=300, bbox_inches="tight"
+        )
     plt.show()
 
 
@@ -1234,6 +1380,7 @@ def make_patch_heatmap_mla(dfSUBSET, labelSUBSET, save_fig: bool = False):
 def make_multi_strat_plot(
     allStrategy, tcell_level_crc, chemlabel, save_fig: bool = False
 ):
+
     # get column names that contain the word 'strategy'
     strategy_cols = ["true_orig"] + tcell_level_crc.columns[
         tcell_level_crc.columns.str.contains("strategy")
@@ -1285,23 +1432,22 @@ def make_multi_strat_plot(
         alpha=0.5,
     )
     plt.ylabel("T cell infiltration level")
-    plt.ylim([0.07, 0.55])
+    plt.ylim([0.1, 0.82])
 
     ax = plt.gca()
     ax.add_patch(rect)
-    ax.set_yticks(np.arange(0.1, 0.6, 0.1))
-    current_values = ax.get_yticks()
-    ax.set_yticklabels(["{:,.0%}".format(x) for x in current_values])
+    # ax.set_yticks(np.arange(0.1, 0.6, 0.1))
+    # current_values = ax.get_yticks()
+    # ax.set_yticklabels(["{:,.0%}".format(x) for x in current_values])
     plt.legend(frameon=False, fontsize="12")
-    # if save_fig:
-    #     plt.savefig("multi_strat_efficacy.svg", format="svg", dpi=300, bbox_inches="tight")
-    # plt.show()
 
     plt.subplot(212, aspect=4)
     # select a divergent colormap
     norm = colors.TwoSlopeNorm(
         vmin=np.min(allStrategy), vcenter=0.0, vmax=np.max(allStrategy) + 1
     )
+    # remove _mRNA from the column names if present
+    allStrategy.columns = [col.split("_")[0] for col in allStrategy.columns]
     plt.imshow(
         np.transpose(allStrategy).loc[chemlabel], norm=norm, cmap=cm.RdBu_r, aspect=0.5
     )
@@ -1318,6 +1464,8 @@ def make_multi_strat_plot(
     ax.grid(which="minor", axis="y", color="w", linestyle="-", linewidth=2)
     ax.grid(which="minor", axis="x", color="w", linestyle="-", linewidth=8)
 
+    # remove _mRNA from the column names if present
+
     plt.yticks(np.arange(len(chemlabel)), np.array(chemlabel), fontsize="8")
     ax.spines.top.set_visible(False)
     ax.spines.left.set_visible(False)
@@ -1331,9 +1479,9 @@ def make_multi_strat_plot(
         left=False,  # ticks along the top edge are off
         labelbottom=False,
     )  # labels along the bottom edge are off
-    cbar = plt.colorbar(ticks=[500, 250, 0, -50, -100])
+    cbar = plt.colorbar(ticks=[200, 100, 0, -50, -100])
     cbar.ax.set_yticklabels(
-        ["$500$", "$250$", "$0$", "$-50$", "$-100$"], fontsize=7
+        ["$200$", "$100$", "$0$", "$-50$", "$-100$"], fontsize=7
     )  # vertically oriented colorbar
     cbar.set_label("Tumor perturbation (%)", rotation=270, fontsize=8)
     plt.ylabel("Perturbed \n target(s)")
@@ -1343,11 +1491,177 @@ def make_multi_strat_plot(
     plt.show()
     return infiltrate_lower, infiltrate_upper
 
+
 def plot_correlation(sorted_results, save_fig=False):
-    plt.figure(figsize=(16,3.4))
-    plt.bar(sorted_results['Variable'], sorted_results['Correlation'], color='tab:gray')
+    # remove _mRNA from the column names if present
+    sorted_results["Variable"] = sorted_results["Variable"].str.split("_").str[0]
+    plt.figure(figsize=(16, 3.4))
+    plt.bar(sorted_results["Variable"], sorted_results["Correlation"], color="tab:gray")
     plt.xticks(rotation=70, fontsize=26)
     plt.yticks(fontsize=24)
     if save_fig:
-        plt.savefig('correlation_barplot.svg', dpi=300, bbox_inches="tight")
+        plt.savefig("correlation_barplot.svg", dpi=300, bbox_inches="tight")
     plt.show()
+
+
+def get_example_Tcell_map(dataset, tcell_level, img=23, save_fig=False):
+
+    f = h5py.File(dataset.patch_path, "r")
+
+    # access metadata in the h5 file
+
+    metadata = f["metadata"]
+
+    # convert metadata to a pandas dataframe
+    metadata_df = pd.DataFrame(metadata[:])
+
+    # get only rows with tumor
+    df = metadata_df[
+        (metadata_df["ImageNumber"] == img) & metadata_df["Contains_Tumor"]
+    ]
+    df = df.merge(tcell_level[["patch_id", "strategy_1"]], on="patch_id", how="left")
+
+    # Determine the size of the grid
+
+    # Initialize the figure with 2 subplots
+    _, axes = plt.subplots(nrows=1, ncols=2, figsize=(10, 5))
+
+    # Plot for Contains_Tcytotoxic
+    plot_grid(axes[0], df, "Contains_Tcytotoxic", [80, 164, 108], [218, 218, 218])
+    axes[0].set_title("Original")
+
+    # Plot for strategy_1
+    plot_grid(axes[1], df, "strategy_1", [80, 164, 108], [218, 218, 218])
+    axes[1].set_title("Strategy 1")
+
+    if save_fig:
+        plt.savefig("strategy_1_example.svg", dpi=300, bbox_inches="tight")
+
+    plt.show()
+
+
+def make_multiple_Tcell_map(
+    dataset, threshold, column=["Contains_Tcytotoxic", "pred_orig"], save_fig=False
+):
+    # get test data
+    X, _, test_metadata, model = get_data_and_model(dataset, "test")
+
+    # get the predictions
+    test_metadata["pred_orig"] = model(X) > threshold
+
+    # remove patches with channel values summing to zero
+    test_metadata = test_metadata[X.sum(axis=(1, 2, 3)) != 0]
+
+    # select images with at least 300 patches
+    df = test_metadata.groupby("ImageNumber").filter(lambda x: len(x) > 150)
+
+    # select images with at least 5 Tcytotoxic patches
+    df = df.groupby("ImageNumber").filter(lambda x: x["Contains_Tcytotoxic"].sum() > 5)
+
+    # Initialize the figure with multiple subplots
+    # Get unique image numbers
+    image_numbers = df["ImageNumber"].unique()
+    num_images = len(image_numbers)
+
+    # Define number of rows and columns for subplots
+    num_cols = 4
+    num_rows = (
+        (num_images + num_cols - 1) // num_cols * len(column)
+    )  # Ceiling division to ensure all images fit
+
+    # Initialize the figure with multiple subplots
+    _, axes = plt.subplots(
+        nrows=num_rows, ncols=num_cols, figsize=(5, num_rows * 2.5 / 2)
+    )
+    axes = axes.flatten()
+
+    for i, img_num in enumerate(image_numbers):
+        img_df = df[df["ImageNumber"] == img_num]
+        for j, col in enumerate(column):
+            plot_grid(
+                axes[i * len(column) + j],
+                img_df,
+                col,
+                [25, 152, 79],
+                [171, 61, 61],
+                gridline=False,
+                tumor_only=False,
+                background_color=[250, 248, 209],
+                max_x=24,
+                max_y=24,
+                border=True,
+            )
+        # axes[i].set_title(f"Image Number: {img_num}")
+    for ax in axes[(num_images * len(column)) :]:
+        ax.axis("off")
+
+    plt.tight_layout()
+    if save_fig:
+        plt.savefig(f"tcell_map_multiple.svg", dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+# Function to create and plot the grid
+def plot_grid(
+    ax,
+    data,
+    color_column,
+    true_color,
+    false_color,
+    gridline=True,
+    background_color=255,
+    max_x=None,
+    max_y=None,
+    border=False,
+    tumor_only=True,
+):
+    if max_x is None:
+        max_x = data["PatchIndex_X"].max() + 1
+    if max_y is None:
+        max_y = data["PatchIndex_Y"].max() + 1
+
+    # Create a grid initialized with white (1's multiplied by 255 for RGB)
+    grid = np.ones((max_x, max_y, 3), dtype=int) * background_color
+
+    # Apply conditions to assign colors
+    for _, row in data.iterrows():
+        x = row["PatchIndex_X"]
+        y = row["PatchIndex_Y"]
+        if tumor_only:
+            if row["Contains_Tumor"]:
+                if row[color_column]:
+                    grid[x, y] = true_color  # True color (green for cytotoxic)
+                else:
+                    grid[x, y] = false_color  # False color (gray)
+        else:
+            if row[color_column]:
+                grid[x, y] = true_color
+            else:
+                grid[x, y] = false_color
+
+    # print proportion of tumor patches with Tcytotoxic
+    # print(
+    #     f"Proportion of tumor patches with Tcytotoxic: {data[data['Contains_Tumor']][color_column].mean()}"
+    # )
+
+    # Plotting the grid with visible white grid lines
+    ax.imshow(grid, interpolation="nearest", origin="upper", aspect="equal")
+
+    if gridline:
+        # Adding white grid lines manually
+        for x in range(max_x + 1):
+            ax.axhline(x - 0.5, color="white", linestyle="-", linewidth=1.5)
+        for y in range(max_y + 1):
+            ax.axvline(y - 0.5, color="white", linestyle="-", linewidth=1.5)
+
+    if border:
+        for spine in ax.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(0.7)
+            spine.set_edgecolor("black")
+
+        # Ensure ticks and labels are not displayed
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.axis("off")
