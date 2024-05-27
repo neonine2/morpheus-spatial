@@ -6,13 +6,6 @@ Morpheus is an integrated deep learning framework that takes large scale spatial
 
 ![Graphical summary of the Morpheus framework](assets/summary_fig.png)
 
-## Features
-
-- **Self-Supervised Learning**: Utilizes unlabeled spatial omics data to learn predictive models for T-cell infiltration.
-- **Counterfactual Reasoning**: Generates minimal perturbations to the tumor environment, hypothesizing potential improvements in T-cell responses.
-- **Deep Learning Integration**: Employs advanced neural network architectures tailored for high-dimensional omics data.
-- **Scalability**: Designed to handle large datasets typical of spatial omics studies, enabling robust analysis across numerous patient samples.
-
 ## Getting Started
 
 ### Prerequisites
@@ -24,11 +17,37 @@ Morpheus is an integrated deep learning framework that takes large scale spatial
 
 ### Installation
 
+#### Using pip (PyPI)
+
 Run the following in the command line
 
 ```bash
 pip install morpheus-spatial
 ```
 
+#### From Source
+
+To install Morpheus from source, clone the repository and install the dependencies:
+
+```bash
+git clone https://github.com/neonine2/morpheus-spatial.git
+cd morpheus
+pip install -r requirements.txt
+pip install .
+```
+
 ### Tutorial
-See `example_notebook.ipynb` for a complete workflow on using Morpheus to generate therapeutic strategies.
+See `tutorial_notebook.ipynb` for a complete workflow on using Morpheus to generate therapeutic strategies.
+
+
+### Repository Structure
+## Repository Structure
+
+- **`assets/`**: Contains images and other assets used in the documentation and the project.
+- **`src/`**: The main package directory containing all core modules and functions.
+- **`reproduction/`**: Includes Jupyter notebooks and scripts for reproducing the main analyses presented in the associated research paper.
+  - **`reproduction_notebook.ipynb`**: A notebook demonstrating how to reproduce the primary analyses of the paper.
+- **`tests/`**: Contains unit tests for the different modules of the package.
+- **`examples/`**: Example scripts and notebooks demonstrating various use cases of the Morpheus framework.
+  - **`tutorial.ipynb`**: A notebook demonstrating how to reproduce the primary analyses of the paper.
+- **`requirements.txt`**: A file listing all Python dependencies required to run the project.
