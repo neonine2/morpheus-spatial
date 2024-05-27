@@ -1,4 +1,4 @@
-# Morpheus: Generating Therapeutic Strategies using Spatial Omics
+# Morpheus: Generating Therapeutic Strategies from Multiplexed Tissue Images
 
 ## Introduction
 
@@ -42,10 +42,10 @@ See `tutorial_notebook.ipynb` for a complete workflow on using Morpheus to gener
 
 ### Repository Structure
 - **`assets/`**: Contains images and other assets used in the documentation and the project.
-- **`src/`**: The main package directory containing all core modules and functions.
-- **`reproduction/`**: Includes Jupyter notebooks and scripts for reproducing the main analyses presented in the associated research paper.
-  - **`reproduction_notebook.ipynb`**: A notebook demonstrating how to reproduce the primary analyses of the paper.
-- **`tests/`**: Contains unit tests for the different modules of the package.
 - **`examples/`**: Example scripts and notebooks demonstrating various use cases of the Morpheus framework.
   - **`tutorial.ipynb`**: A notebook demonstrating how to reproduce the primary analyses of the paper.
+- **`reproduction/`**: Includes Jupyter notebooks and scripts for reproducing the main analyses presented in the associated research paper.
+  - **`reproduction_notebook.ipynb`**: A notebook demonstrating how to reproduce the primary analyses of the paper.
+- **`src/`**: The main package directory containing all core modules and functions.
+- **`tests/`**: Contains unit tests for the different modules of the package.
 - **`requirements.txt`**: A file listing all Python dependencies required to run the project.
