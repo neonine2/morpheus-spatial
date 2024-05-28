@@ -100,34 +100,38 @@ def main(
 
 
 if __name__ == "__main__":
-    BASE = "/groups/mthomson/zwang2/IMC/output/hochMelanoma_sz48_pxl3_nc41/final"  # change to your own directory
     optimization_param = {
         "use_kdtree": True,
-        "theta": 60.0,
-        "kappa": -0.7,
+        "theta": 50.0,
+        "kappa": -0.34,
         "learning_rate_init": 0.1,
-        "beta": 0.3,
+        "beta": 80.0,
         "max_iterations": 1000,
-        "c_init": 25000.0,
+        "c_init": 1000.0,
         "c_steps": 5,
-        "threshold": 0.31,
+        "threshold": 0.33,  # probability cutoff for classification
         "channel_to_perturb": [
-            "CCL4_mRNA",
-            "CCL18_mRNA",
-            "CXCL8_mRNA",
-            "CXCL10_mRNA",
-            "CXCL12_mRNA",
-            "CXCL13_mRNA",
-            "CCL2_mRNA",
-            "CCL22_mRNA",
-            "CXCL9_mRNA",
-            "CCL8_mRNA",
-            "CCL19_mRNA",
+            "Glnsynthetase",
+            "CCR4",
+            "PDL1",
+            "LAG3",
+            "CD105endoglin",
+            "TIM3",
+            "CXCR4",
+            "PD1",
+            "CYR61",
+            "CD44",
+            "IL10",
+            "CXCL12",
+            "CXCR3",
+            "Galectin9",
+            "YAP",
         ],
     }
+    BASE = "crc"  # change to your own directory
     main(
         data_path=f"{BASE}/singlecell.csv",
-        additional_cols=["Cancer_Stage", "IHC_T_score"],
-        cf_dir=f"{BASE}/cf/run_0p3",
+        additional_cols=["type", "FLD"],
+        cf_dir=f"{BASE}/cf/",
         optimization_param=optimization_param,
     )

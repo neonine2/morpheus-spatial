@@ -27,6 +27,7 @@ class SpatialDataset:
         split_dir: str = None,
         model_path: str = None,
         cf_dir: str = None,
+        verbose: bool = False,
     ):
         self.data_dim = None
         self.metadata = None
@@ -34,7 +35,10 @@ class SpatialDataset:
         self.root_dir = os.path.dirname(input_path)
 
         self.load_input_csv(
-            channel_names, additional_cols, check_only=True
+            channel_names,
+            additional_cols,
+            check_only=True,
+            verbose=verbose,
         )  # also sets self.channel_names
 
         # set the directories where different outputs are saved
@@ -52,6 +56,10 @@ class SpatialDataset:
             self.get_split_info()
 
         # display all the directories set
+        if verbose:
+            self.display_directories()
+
+    def display_directories(self):
         print(f"Input path: {self.input_path}")
         print(f"Patch path: {self.patch_path}")
         print(f"Split directory: {self.split_dir}")
@@ -65,7 +73,11 @@ class SpatialDataset:
             )
 
     def load_input_csv(
-        self, channel_names: list = [], additional_cols: list = [], check_only=False
+        self,
+        channel_names: list = [],
+        additional_cols: list = [],
+        check_only=False,
+        verbose=False,
     ):
         try:
             input_csv = pd.read_csv(self.input_path, low_memory=False)
@@ -90,9 +102,16 @@ class SpatialDataset:
                 for col in input_csv.columns
                 if col not in required_cols + additional_cols
             ]
-            print(
-                f"{len(channel_names)} channels inferred from input CSV: {channel_names}"
-            )
+            if verbose:
+                print(
+                    f"{len(channel_names)} channels inferred from input CSV: {channel_names}"
+                )
+        elif len(additional_cols) == 0:
+            additional_cols = [
+                col
+                for col in input_csv.columns
+                if col not in required_cols + channel_names
+            ]
         required_cols += channel_names + additional_cols
 
         for col in required_cols:
@@ -142,6 +161,7 @@ class SpatialDataset:
                 self.load_patch_data()
                 self.check_loaded_patch()
                 print(f"File {self.patch_path} already exists, existing file loaded")
+                print(f"Total number of patches: {len(self.metadata)}")
                 return
 
         # print out details about the patches
@@ -197,7 +217,9 @@ class SpatialDataset:
             print(f"Patches saved to {self.patch_path}")
             self.load_patch_data()
             self.check_loaded_patch()
-        return metadata_df
+        print(f"Number of patches generated: {n}")
+        print(f"Example patch metadata:\n{metadata_df.head()}")
+        return
 
     def set_patch_path(self, patch_path: str = None):
         path = (
@@ -296,7 +318,7 @@ class SpatialDataset:
         random_state=None,
         shuffle=True,
         tolerance=None,
-        given_split: list = None,
+        specify_split: dict = None,
         save=True,
     ):
         """
@@ -325,8 +347,8 @@ class SpatialDataset:
                 The lower bound for the proportion of the train split
             - n_tol: int
                 The number of attempts to generate a valid data split
-        given_split: list
-            A list of patient IDs to use for the train, validation, and test splits (in this order)
+        specify_split: dict
+            A dictionary specifying patient IDs in the train, validation, and test splits
         save: bool
             Whether to save the data splits to the save directory
         """
@@ -346,10 +368,10 @@ class SpatialDataset:
             return
 
         print("Generating data splits...")
-        if given_split is not None:
-            if SpatialDataset.issplitvalid(given_split):
+        if specify_split is not None:
+            if SpatialDataset.issplitvalid(specify_split):
                 patient_split = {
-                    name: np.array(spt) for name, spt in given_split.items()
+                    name: np.array(spt) for name, spt in specify_split.items()
                 }
             else:
                 raise ValueError("Given split is not valid")
