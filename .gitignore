@@ -162,5 +162,5 @@ cython_debug/
 # Data Files
 data/
 
-# Ignore tunnel log file
-tunnel.log
+# Ignore all log file
+*.log
