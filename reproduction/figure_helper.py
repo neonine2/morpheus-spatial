@@ -10,6 +10,7 @@ from random import shuffle
 from scipy.stats import t
 from analysis_helper import load_data_split, get_data_and_model
 import h5py
+from matplotlib.ticker import ScalarFormatter
 
 
 def plot_prediction_scatterplot(pred_df: pd.DataFrame, save_fig: bool = False):
@@ -353,7 +354,7 @@ def plot_perturbation_performance(
             save_fig,
         )
 
-    return tcell_level_patient
+    return 
 
 
 def plot_multi_horizontal_bar(
@@ -1495,12 +1496,36 @@ def make_multi_strat_plot(
 def plot_correlation(sorted_results, save_fig=False):
     # remove _mRNA from the column names if present
     sorted_results["Variable"] = sorted_results["Variable"].str.split("_").str[0]
-    plt.figure(figsize=(16, 3.4))
-    plt.bar(sorted_results["Variable"], sorted_results["Correlation"], color="tab:gray")
-    plt.xticks(rotation=70, fontsize=26)
+    fig, ax = plt.subplots(figsize=(16, 6.4))
+    plt.bar(
+        sorted_results["Variable"], sorted_results["Correlation"], color="lightgray"
+    )
+    plt.xticks(rotation=50, fontsize=26)
     plt.yticks(fontsize=24)
+    ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+    ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+
     if save_fig:
         plt.savefig("correlation_barplot.svg", dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+def plot_mutual_info(sorted_results, save_fig=False):
+    # remove _mRNA from the column names if present
+    sorted_results["Variable"] = sorted_results["Variable"].str.split("_").str[0]
+    fig, ax = plt.subplots(figsize=(16, 6.4))
+    plt.bar(
+        sorted_results["Variable"],
+        sorted_results["mutual information"],
+        color="lightgray",
+    )
+    plt.xticks(rotation=50, fontsize=26)
+    plt.yticks(fontsize=24)
+    ax.yaxis.set_major_formatter(ScalarFormatter(useMathText=True))
+    ax.ticklabel_format(axis="y", style="sci", scilimits=(0, 0))
+
+    if save_fig:
+        plt.savefig("mutual_info_barplot.svg", dpi=300, bbox_inches="tight")
     plt.show()
 
 

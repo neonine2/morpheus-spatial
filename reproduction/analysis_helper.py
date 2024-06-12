@@ -8,6 +8,9 @@ from typing import Union, List
 import scipy.stats as stats
 from statsmodels.stats import multitest
 from morpheus import SpatialDataset, load_model
+from sklearn.metrics import mutual_info_score
+from sklearn.preprocessing import KBinsDiscretizer
+
 
 def get_rmse_and_prediction(dataset, split, classify_threshold=0.5):
     X, y, test_metadata, model = get_data_and_model(
@@ -413,9 +416,7 @@ def _compute_differential_analysis(partitioned_dfs, compare):
         _, p_value = stats.ranksums(val_to_compare[1], val_to_compare[2])
         results["p_values"].append(p_value)
 
-    _, p_values_adj, _, _ = multitest.multipletests(
-        results["p_values"], method="sidak"
-    )
+    _, p_values_adj, _, _ = multitest.multipletests(results["p_values"], method="sidak")
     plot_df = pd.DataFrame(
         {
             compare: column,
@@ -533,17 +534,48 @@ def get_IHC_subset(mla_data, channel_to_perturb_mla):
 def get_feature_correlation(dataset, channel_to_perturb):
     X, y, metadata = load_data_split(dataset, data_split="train")
 
-    total_intensity = pd.DataFrame(X.sum(axis=(1,2)), columns=dataset.channel_names)[channel_to_perturb]
+    total_intensity = pd.DataFrame(X.sum(axis=(1, 2)), columns=dataset.channel_names)[
+        channel_to_perturb
+    ]
     label = pd.Series([1 if ii else 0 for ii in y])
 
     # Calculate point-biserial correlation for each column
     results = []
     for column in total_intensity.columns:
         correlation, _ = stats.pointbiserialr(label, total_intensity[column])
-        results.append({'Variable': column, 'Correlation': correlation})
+        results.append({"Variable": column, "Correlation": correlation})
 
     # Create a DataFrame from the results and sort it
     results_df = pd.DataFrame(results)
-    sorted_results = results_df.sort_values(by='Correlation', ascending=False)
+    sorted_results = results_df.sort_values(by="Correlation", ascending=False)
+
+    return sorted_results
+
+
+def get_feature_mi(dataset, channel_to_perturb):
+
+    X, y, metadata = load_data_split(dataset, data_split="train")
+    print("data loaded")
+
+    total_intensity = pd.DataFrame(X.sum(axis=(1, 2)), columns=dataset.channel_names)[
+        channel_to_perturb
+    ]
+    label = pd.Series([1 if ii else 0 for ii in y])
+
+    results = []
+    for column in total_intensity.columns:
+        # Discretize the continuous variable
+        discretizer = KBinsDiscretizer(n_bins=5, encode="ordinal", strategy="uniform")
+        continuous_discrete = discretizer.fit_transform(
+            total_intensity[column].to_numpy().reshape(-1, 1)
+        ).flatten()
+
+        mi = mutual_info_score(label, continuous_discrete)
+
+        results.append({"Variable": column, "mutual information": mi})
+
+    # Create a DataFrame from the results and sort it
+    results_df = pd.DataFrame(results)
+    sorted_results = results_df.sort_values(by="mutual information", ascending=False)
 
     return sorted_results
