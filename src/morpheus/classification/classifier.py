@@ -101,11 +101,13 @@ class PatchClassifier(light.LightningModule):
             preds = torch.column_stack((preds, new_col))
         bce = functional.binary_cross_entropy_with_logits(preds, target)
 
+        auroc = tf_classifier.binary_auroc(
+            preds[:, 1], target[:, 1].long()
+        )  # keep as probabilities
         preds = torch.argmax(preds, dim=1).float()
         target = torch.argmax(target, dim=1).float()
         test_acc = tf_classifier.binary_accuracy(preds, target)
         bmc = tf_classifier.binary_matthews_corrcoef(preds, target).float()
-        auroc = tf_classifier.binary_auroc(preds, target.long())
         f1 = tf_classifier.binary_f1_score(preds, target)
         precision = tf_classifier.binary_precision(preds, target)
         recall = tf_classifier.binary_recall(preds, target)

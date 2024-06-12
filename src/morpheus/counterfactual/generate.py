@@ -4,6 +4,7 @@ import _pickle as pickle
 import numpy as np
 import pandas as pd
 from typing import Optional
+
 import torch
 
 import ray
@@ -56,13 +57,14 @@ def get_counterfactual(
         device (str, optional): Device to use for computation. Defaults to None.
         model_kwargs (dict, optional): Additional keyword arguments for the model. Defaults to {}.
     """
+
     # Set default values
     threshold = optimization_params.pop("threshold", 0.5)
     channel_to_perturb = optimization_params.pop("channel_to_perturb", None)
 
     # set default tensor type to cuda if available
     torch.set_default_tensor_type(
-        torch.cuda.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
+        torch.FloatTensor if torch.cuda.is_available() else torch.FloatTensor
     )
 
     # Load normalization parameters
@@ -91,6 +93,7 @@ def get_counterfactual(
     # Build kdtree if it does not exist
     model = load_model(model_path, **model_kwargs).to(device)
     if not os.path.exists(kdtree_path):
+        print("Building kdtree...")
         build_kdtree(kdtree_path, train_data, model, mu, stdev, trustscore_kwargs)
         print("kdtree saved")
 
@@ -145,6 +148,7 @@ def get_counterfactual(
         > threshold
         for args in tqdm(image_args, miniters=100)
     ]
+    print("Filter out images that are already classified as target class")
     image_args = [args for i, args in enumerate(image_args) if not discard_mask[i]]
 
     # Save hyperparameters
@@ -220,7 +224,8 @@ def generate_one_cf(
     Args:
          original_patch (np.ndarray): Original patch to be explained.
          original_class (np.ndarray): Original label of the patch.
-         model (torch.nn.Module): Model to be explained.
+            target_class (int): Target class for the counterfactual.
+            model_path (str): Path to the model.
          channel_to_perturb (list): List of channels to perturb.
          normalization_params (dict): Dictionary containing the mean and standard deviation of each channel.
          train_data (str, optional): Path to the training data. Defaults to None.
@@ -244,16 +249,16 @@ def generate_one_cf(
     H, _, C = original_patch.shape
     original_patch = torch.from_numpy(original_patch.copy()).float().to(device)
     original_patch = (original_patch - mu) / stdev
-    original_class = torch.tensor([original_class], dtype=torch.int64)
-    X_mean = torch.mean(original_patch, dim=(0, 1))
+    original_class = torch.tensor([original_class], dtype=torch.int64).to(device)
+    X_mean = torch.mean(original_patch, dim=(0, 1)).to(device)
 
     # move variables to cuda if available
-    if torch.cuda.is_available():
-        original_patch = original_patch.cuda()
-        original_class = original_class.cuda()
-        X_mean = X_mean.cuda()
-        stdev = stdev.cuda()
-        mu = mu.cuda()
+    # if torch.cuda.is_available():
+    #     original_patch = original_patch.cuda()
+    #     original_class = original_class.cuda()
+    #     X_mean = X_mean.cuda()
+    #     stdev = stdev.cuda()
+    #     mu = mu.cuda()
 
     # if model.arch == "mlp":
     #     original_patch = X_mean
@@ -348,9 +353,6 @@ def build_kdtree(
     train_patch = torch.from_numpy(
         (train_patch - np.array(mu)) / np.array(stdev)
     ).float()
-    # if model.arch == "mlp":
-    #     X_t = torch.mean(train_patch, (1, 2))
-    # else:
     X_t = torch.permute(train_patch, (0, 3, 1, 2))
 
     model_out = model(X_t).detach().numpy()

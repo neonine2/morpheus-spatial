@@ -20,7 +20,7 @@ def train(
 ):
     if trainer_params is None:
         trainer_params = {
-            "max_epochs": 100,
+            "max_epochs": 30,
             "accelerator": "auto",
             "devices": "auto",
             "logger": False,
@@ -89,6 +89,7 @@ def test_model(
         model_path = dataset.model_path
 
     # load model
+    print(model_kwargs)
     model = PatchClassifier.load_from_checkpoint(
         checkpoint_path=model_path, **model_kwargs
     )
@@ -102,7 +103,7 @@ def test_model(
     )
 
     # testing
-    trainer = Trainer(devices=1)
+    trainer = Trainer(devices=1, logger=False)
     print(f"Testing model at {model_path}")
     trainer.test(model=model, dataloaders=test_loader)
 

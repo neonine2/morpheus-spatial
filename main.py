@@ -4,6 +4,7 @@ from lightning.pytorch import seed_everything
 seed_everything(42)
 
 import morpheus as mp
+import json
 
 
 def main(
@@ -15,6 +16,7 @@ def main(
     cell_types=["Tcytotoxic", "Tumor"],
     mask_cell_types=["Tcytotoxic"],
     stratify_by="Contains_Tcytotoxic",
+    patient_split=None,
     model_path=None,
     model_arch="unet",
     trainer_params={"max_epochs": 30, "accelerator": "auto", "logger": False},
@@ -31,6 +33,7 @@ def main(
         cell_types (list): list of cell types
         mask_cell_types (list): list of cell types to mask
         stratify_by (str): column to stratify by when splitting the dataset
+        patient_split (dict): specify patient split
         model_path (str): path to the trained model
         model_arch (str): model architecture
         trainer_params (dict): training parameters
@@ -50,12 +53,13 @@ def main(
     )
 
     print("Loading data...")
-    dataset.generate_data_splits(stratify_by=stratify_by)
+    dataset.generate_data_splits(stratify_by=stratify_by, specify_split=patient_split)
 
     # initialize model
     n_channels = dataset.n_channels
     img_size = dataset.img_size
     model_path = dataset.model_path if model_path is None else model_path
+    print("Model path:", model_path)
 
     if model_path is None:
         model = mp.PatchClassifier(n_channels, img_size, model_arch)
@@ -77,7 +81,7 @@ def main(
         (dataset.metadata["Contains_Tumor"] == 1)
         & (dataset.metadata["Contains_Tcytotoxic"] == 0)
         & (dataset.metadata["splits"] == "train")
-    ].sample(frac=1, random_state=42)
+    ]
 
     # example of selected instances to generate counterfactuals
     print(select_metadata.head())
@@ -100,6 +104,7 @@ def main(
 
 
 if __name__ == "__main__":
+    # Example of running the main function on a data set
     optimization_param = {
         "use_kdtree": True,
         "theta": 50.0,
@@ -107,8 +112,8 @@ if __name__ == "__main__":
         "learning_rate_init": 0.1,
         "beta": 80.0,
         "max_iterations": 1000,
-        "c_init": 1000.0,
-        "c_steps": 5,
+        "c_init": 10000.0,
+        "c_steps": 4,
         "threshold": 0.33,  # probability cutoff for classification
         "channel_to_perturb": [
             "Glnsynthetase",
@@ -128,10 +133,14 @@ if __name__ == "__main__":
             "YAP",
         ],
     }
-    BASE = "crc"  # change to your own directory
+    BASE = "/groups/mthomson/zwang2/IMC/paper/crc"  # change to your own directory
+    # For paper reproduction purpose: load patient split and trained model
+    with open(os.path.join(BASE, "patient_split.json"), "r") as file:
+        patient_split = json.load(file)
     main(
-        data_path=f"{BASE}/singlecell.csv",
+        data_path=os.path.join(BASE, "singlecell.csv"),
         additional_cols=["type", "FLD"],
-        cf_dir=f"{BASE}/cf/",
+        cf_dir=os.path.join(BASE, "cf/c_10000/"),
         optimization_param=optimization_param,
+        patient_split=patient_split,
     )

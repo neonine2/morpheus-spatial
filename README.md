@@ -10,7 +10,7 @@ Morpheus is an integrated deep learning framework that takes large scale spatial
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python >=3.9, <3.12
 - PyTorch Lightning 2.2.0 or higher
 - CUDA 11.7 or higher (for GPU acceleration)
 - Other dependencies listed in `requirements.txt`
