@@ -58,7 +58,7 @@ def optimize_threshold(dataset, split="validate"):
             {"pred_binary": "mean", "true": "mean"}
         )
         rmse.append(np.sqrt(np.mean((pred["pred_binary"] - pred["true"]) ** 2)))
-    return thresholds[np.argmin(rmse)], np.min(rmse)
+    return thresholds[np.argmin(rmse)]
 
 
 def retrieve_perturbation(

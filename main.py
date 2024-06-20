@@ -112,8 +112,8 @@ if __name__ == "__main__":
         "learning_rate_init": 0.1,
         "beta": 80.0,
         "max_iterations": 1000,
-        "c_init": 10000.0,
-        "c_steps": 4,
+        "c_init": 1000.0,
+        "c_steps": 5,
         "threshold": 0.33,  # probability cutoff for classification
         "channel_to_perturb": [
             "Glnsynthetase",
@@ -140,7 +140,7 @@ if __name__ == "__main__":
     main(
         data_path=os.path.join(BASE, "singlecell.csv"),
         additional_cols=["type", "FLD"],
-        cf_dir=os.path.join(BASE, "cf/c_10000/"),
+        cf_dir=os.path.join(BASE, "cf/run_0"),
         optimization_param=optimization_param,
         patient_split=patient_split,
     )
