@@ -23,6 +23,7 @@ class SpatialDataset:
         input_path: str,
         channel_names: list = [],
         additional_cols: list = [],
+        channel_path: str = None,
         patch_path: str = None,
         split_dir: str = None,
         model_path: str = None,
@@ -33,6 +34,10 @@ class SpatialDataset:
         self.metadata = None
         self.input_path = input_path
         self.root_dir = os.path.dirname(input_path)
+
+        if channel_path is not None:
+            with open(channel_path, "r") as f:
+                channel_names = f.read().splitlines()
 
         self.load_input_csv(
             channel_names,
@@ -364,6 +369,7 @@ class SpatialDataset:
             self.split_dir = save_dir
 
         if os.path.isdir(os.path.join(self.split_dir, Splits.train.value)):
+            self.get_split_info()
             print(f"Data splits already exist in {self.split_dir}")
             return
 

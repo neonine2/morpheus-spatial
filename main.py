@@ -98,8 +98,7 @@ def main(
         save_dir=save_dir,
         device="cpu",
         num_workers=os.cpu_count() - 1,
-        verbosity=0,
-        model_kwargs={"in_channels": n_channels, "img_size": img_size},
+        verbosity=0
     )
 
 

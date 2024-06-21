@@ -77,7 +77,7 @@ def train(
 
 def test_model(
     dataset: SpatialDataset,
-    predict_label: str,
+    predict_label: str = 'Contains_Tcytotoxic',
     model_arch: str = "unet",
     model_path: str = None,
     dataloader_params=None,
@@ -89,7 +89,6 @@ def test_model(
         model_path = dataset.model_path
 
     # load model
-    print(model_kwargs)
     model = PatchClassifier.load_from_checkpoint(
         checkpoint_path=model_path, **model_kwargs
     )
