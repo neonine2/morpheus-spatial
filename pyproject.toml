@@ -20,6 +20,7 @@ aiohttp = ">=3.9.4"
 idna = ">=3.7"
 pillow = ">=10.3.0"
 Jinja2 = ">=3.1.4"
+numpy = "<=1.26"
 
 [tool.poetry.group.test.dependencies]
 pytest = "^8.1.0"
