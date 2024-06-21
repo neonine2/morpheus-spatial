@@ -164,3 +164,9 @@ data/
 
 # Ignore all log file
 *.log
+
+# ignore __pycache__ directories
+__pycache__/
+
+# ignore all .pyc files
+*.pyc
