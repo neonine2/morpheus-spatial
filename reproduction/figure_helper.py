@@ -1433,7 +1433,7 @@ def make_multi_strat_plot(
         alpha=0.5,
     )
     plt.ylabel("T cell infiltration level")
-    plt.ylim([0.1, 0.82])
+    # plt.ylim([0.1, 0.82])
 
     ax = plt.gca()
     ax.add_patch(rect)
@@ -1496,7 +1496,7 @@ def make_multi_strat_plot(
 def plot_correlation(sorted_results, save_fig=False):
     # remove _mRNA from the column names if present
     sorted_results["Variable"] = sorted_results["Variable"].str.split("_").str[0]
-    fig, ax = plt.subplots(figsize=(16, 6.4))
+    fig, ax = plt.subplots(figsize=(12, 4.4))
     plt.bar(
         sorted_results["Variable"], sorted_results["Correlation"], color="lightgray"
     )
