@@ -105,7 +105,7 @@ def plot_patient_perturbation(
     extra_cols: list = [],
     save_fig: bool = False,
     set_thresh: bool = True,
-    keep_top_2: bool = True,
+    keep_top_2: bool = False,
 ):
     """
     Plot the perturbation of each patient as well as the median perturbation of each cluster of patients
@@ -1002,7 +1002,7 @@ def plot_umap_embedding(
     # Get the labels of the clusters
     cluster_labels = kmeans.labels_
     label_counts = np.bincount(cluster_labels)
-    print(label_counts)
+    # print(label_counts)
 
     plt.figure(figsize=(8, 5))
     plt.scatter(

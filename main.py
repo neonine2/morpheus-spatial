@@ -139,7 +139,7 @@ if __name__ == "__main__":
     main(
         data_path=os.path.join(BASE, "singlecell.csv"),
         additional_cols=["type", "FLD"],
-        cf_dir=os.path.join(BASE, "cf/run_0"),
+        cf_dir=os.path.join(BASE, "cf/example"),
         optimization_param=optimization_param,
         patient_split=patient_split,
     )

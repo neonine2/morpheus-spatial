@@ -267,7 +267,7 @@ def get_umap_embeddings(
 
     # remove rows that contain NaN or infinite values
     valid_rows = np.isfinite(df_normalized).all(axis=1).tolist()
-    print(f"number of rows removed: {len(df_normalized) - np.array(valid_rows).sum()}")
+    # print(f"number of rows removed: {len(df_normalized) - np.array(valid_rows).sum()}")
     df_normalized = df_normalized[valid_rows]
     y = y[valid_rows]
     metadata = metadata[valid_rows]
