@@ -132,7 +132,7 @@ if __name__ == "__main__":
             "YAP",
         ],
     }
-    BASE = "/groups/mthomson/zwang2/IMC/paper/crc"  # change to your own directory
+    BASE = "crc"  # change to your own directory
     # For paper reproduction purpose: load patient split and trained model
     with open(os.path.join(BASE, "patient_split.json"), "r") as file:
         patient_split = json.load(file)
