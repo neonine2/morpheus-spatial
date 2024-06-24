@@ -250,6 +250,9 @@ class SpatialDataset:
                 raise ValueError(f"Model file not found at {model_path}")
         else:
             model_dir = os.path.join(self.root_dir, DefaultFolderName.model.value)
+            DEFAULT_UNET = os.path.join(model_dir, 'unet.ckpt')
+            if os.path.isfile(DEFAULT_UNET):
+                return DEFAULT_UNET
             # look into model_dir (and possible subdirectories) for the first model file
             for root, _, files in os.walk(model_dir):
                 for file in files:
