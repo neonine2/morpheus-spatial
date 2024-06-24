@@ -15,6 +15,8 @@ Morpheus is an integrated deep learning framework that takes large scale spatial
 - CUDA 11.7 or higher (for GPU acceleration)
 - Other dependencies listed in `requirements.txt`
 
+Note numpy 2.0 or above not currently supported 
+
 ### Installation
 
 #### Using pip (PyPI)
