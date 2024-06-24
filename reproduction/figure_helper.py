@@ -1427,7 +1427,7 @@ def make_multi_strat_plot(
     # Add a transparent rectangle around the horizontal line to represent the error
     rect = plt.Rectangle(
         (-0.5, infiltrate_lower["true_orig"]),
-        4,
+        len(allStrategy),
         infiltrate_upper["true_orig"] - infiltrate_lower["true_orig"],
         facecolor="tab:gray",
         alpha=0.5,

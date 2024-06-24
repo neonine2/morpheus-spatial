@@ -177,11 +177,11 @@ def load_data_split(
         remove_few_tumor_cells=remove_few_tumor_cells,
     )
     final_image_count = _metadata["ImageNumber"].nunique()
-    if original_patch_count - final_image_count > 0:
-        print(
-            "Number of tissues filtered out:", original_patch_count - final_image_count
-        )
-        print("Number of tissues:", final_image_count)
+    # if original_patch_count - final_image_count > 0:
+    #     print(
+    #         "Number of tissues filtered out:", original_patch_count - final_image_count
+    #     )
+    #     print("Number of tissues:", final_image_count)
 
     X = dataset.load_from_metadata(_metadata, parallel=parallel)
     y = _metadata["Contains_Tcytotoxic"].values.flatten()
