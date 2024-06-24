@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
-from ..classification import load_model
+from ..classification import load_model, optimize_threshold
 from ..confidence import TrustScore
 from ..configuration import (
     Splits,
@@ -58,8 +58,10 @@ def get_counterfactual(
         model_kwargs (dict, optional): Additional keyword arguments for the model. Defaults to {}.
     """
 
+    # Get optimal model threshold by maximizing RMSE over validation set
+    opt_cutoff = optimize_threshold(dataset, split="validate", model_path=model_path) 
     # Set default values
-    threshold = optimization_params.pop("threshold", 0.5)
+    threshold = optimization_params.pop("threshold", opt_cutoff)
     channel_to_perturb = optimization_params.pop("channel_to_perturb", None)
 
     # set default tensor type to cuda if available
@@ -89,7 +91,7 @@ def get_counterfactual(
             dataset.root_dir, DefaultFolderName.counterfactual.value
         )
     os.makedirs(save_dir, exist_ok=True)
-
+    
     # Build kdtree if it does not exist
     model = load_model(model_path, **model_kwargs).to(device)
     if not os.path.exists(kdtree_path):
@@ -133,6 +135,7 @@ def get_counterfactual(
             }
         )
 
+    print("Applying model to all instances to filter out ones already classified as target class")
     discard_mask = [
         args["original_class"] == target_class
         or model(
@@ -148,11 +151,11 @@ def get_counterfactual(
         > threshold
         for args in tqdm(image_args, miniters=100)
     ]
-    print("Filter out images that are already classified as target class")
     image_args = [args for i, args in enumerate(image_args) if not discard_mask[i]]
 
     # Save hyperparameters
-    with open(os.path.join(save_dir, "hyperparameters.json"), "w") as json_file:
+    hyper_path = os.path.join(save_dir, "hyperparameters.json")
+    with open(hyper_path, "w") as json_file:
         json.dump(
             {
                 "target_class": target_class,
@@ -162,8 +165,10 @@ def get_counterfactual(
             },
             json_file,
         )
+    print(f"hyperparameters saved to {hyper_path}")
 
     # Generate counterfactuals
+    print("Generating counterfactuals...")
     if num_workers > 1:
         # Initialize Ray
         ray.shutdown()
@@ -193,6 +198,7 @@ def get_counterfactual(
     else:
         for args in tqdm(image_args, total=len(image_args)):
             generate_one_cf(**{**args, **general_args})
+    print("Countefactual generation completed!")
 
 
 @ray.remote
@@ -252,23 +258,8 @@ def generate_one_cf(
     original_class = torch.tensor([original_class], dtype=torch.int64).to(device)
     X_mean = torch.mean(original_patch, dim=(0, 1)).to(device)
 
-    # move variables to cuda if available
-    # if torch.cuda.is_available():
-    #     original_patch = original_patch.cuda()
-    #     original_class = original_class.cuda()
-    #     X_mean = X_mean.cuda()
-    #     stdev = stdev.cuda()
-    #     mu = mu.cuda()
-
-    # if model.arch == "mlp":
-    #     original_patch = X_mean
-
     # Adding init layer to model
     unnormed_mean = X_mean * stdev + mu
-    # if model.arch == "mlp":
-    #     altered_model = lambda x: torch.nn.functional.softmax(model(x), dim=1)
-    #     input_transform = lambda x: x
-    # else:
     unnormed_patch = original_patch[None, :] * stdev + mu
     init_fun = lambda y: alter_image(y, unnormed_patch, mu, stdev, unnormed_mean)
     altered_model, input_transform = add_init_layer(init_fun, model)

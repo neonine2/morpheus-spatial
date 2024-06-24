@@ -7,11 +7,29 @@ import torch
 from .classifier import load_model
 from ..datasets.spatial_dataset import SpatialDataset
 
-def load_classifier(dataset, mu, stdev):
-    classifier = load_model(
-        dataset.model_path,
-        **{"in_channels": dataset.n_channels, "img_size": dataset.img_size},
+def optimize_threshold(dataset, split="validate", model_path=None):
+    X, y, metadata, model = get_data_and_model(
+        dataset,
+        model_path=model_path,
+        data_split=split,
+        remove_small_images=True,
     )
+    pred = model(X)
+    metadata["pred"] = pred
+    metadata["true"] = y
+
+    thresholds = np.linspace(0, 1, 101)
+    rmse = []
+    for t in thresholds:
+        metadata["pred_binary"] = metadata["pred"] > t
+        pred = metadata.groupby("ImageNumber").agg(
+            {"pred_binary": "mean", "true": "mean"}
+        )
+        rmse.append(np.sqrt(np.mean((pred["pred_binary"] - pred["true"]) ** 2)))
+    return thresholds[np.argmin(rmse)]
+
+def load_classifier(model_path, mu, stdev):
+    classifier = load_model(model_path)
     wrapped_classifier = (
         lambda x: classifier(
             torch.permute(torch.from_numpy((x - mu) / stdev).float(), (0, 3, 1, 2))
@@ -50,6 +68,7 @@ def load_data_split(
 def get_data_and_model(
     dataset: SpatialDataset,
     data_split: Union[str, List[str]],
+    model_path: str = None,
     remove_small_images: bool = False,
     pallalel: bool = False,
 ):
@@ -70,26 +89,7 @@ def get_data_and_model(
         stdev = normalization_params["stdev"]
 
     # load classifier
-    model = load_classifier(dataset, mu, stdev)
+    model_path = model_path if model_path is not None else dataset.model_path
+    model = load_classifier(model_path, mu, stdev)
 
     return X, y, metadata, model
-
-def optimize_threshold(dataset, split="validate"):
-    X, y, metadata, model = get_data_and_model(
-        dataset,
-        data_split=split,
-        remove_small_images=True,
-    )
-    pred = model(X)
-    metadata["pred"] = pred
-    metadata["true"] = y
-
-    thresholds = np.linspace(0, 1, 101)
-    rmse = []
-    for t in thresholds:
-        metadata["pred_binary"] = metadata["pred"] > t
-        pred = metadata.groupby("ImageNumber").agg(
-            {"pred_binary": "mean", "true": "mean"}
-        )
-        rmse.append(np.sqrt(np.mean((pred["pred_binary"] - pred["true"]) ** 2)))
-    return thresholds[np.argmin(rmse)]
