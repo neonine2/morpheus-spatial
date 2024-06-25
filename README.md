@@ -33,7 +33,7 @@ To install Morpheus from source, clone the repository and install the dependenci
 
 ```bash
 git clone https://github.com/neonine2/morpheus-spatial.git
-cd morpheus
+cd morpheus-spatial
 pip install -r requirements.txt
 pip install .
 ```
