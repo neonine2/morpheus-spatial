@@ -39,7 +39,7 @@ pip install .
 ```
 
 ### Tutorial
-See `tutorial_notebook.ipynb` for a complete workflow on using Morpheus to generate therapeutic strategies.
+See `tutorial_notebook.ipynb` for a complete, self-contained workflow on using Morpheus to generate therapeutic strategies.
 
 
 ### Repository Structure
