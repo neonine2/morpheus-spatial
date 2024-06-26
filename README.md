@@ -42,6 +42,25 @@ pip install .
 See `tutorial_notebook.ipynb` for a complete, self-contained workflow on using Morpheus to generate therapeutic strategies.
 
 
+### Known Issues
+
+#### OpenMP Conflicts on macOS
+Some users may encounter warnings about conflicting OpenMP libraries. If you see a warning about Intel OpenMP and LLVM OpenMP being loaded at the same time, try the following solution:
+
+Set this environment variable before running your Python script or notebook:
+```bash
+export KMP_DUPLICATE_LIB_OK=TRUE
+```
+
+Alternatively, you can set this in your Python code:
+```python
+import os
+os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
+```
+
+If issues persist, please open an issue on our GitHub repository.
+
+
 ### Repository Structure
 - **`assets/`**: Contains images and other assets used in the documentation and the project.
 - **`examples/`**: Example scripts and notebooks demonstrating various use cases of the Morpheus framework.
