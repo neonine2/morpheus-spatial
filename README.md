@@ -45,20 +45,7 @@ See `tutorial_notebook.ipynb` for a complete, self-contained workflow on using M
 ### Known Issues
 
 #### OpenMP Conflicts on macOS
-Some users may encounter warnings about conflicting OpenMP libraries. If you see a warning about Intel OpenMP and LLVM OpenMP being loaded at the same time, try the following solution:
-
-Set this environment variable before running your Python script or notebook:
-```bash
-export KMP_DUPLICATE_LIB_OK=TRUE
-```
-
-Alternatively, you can set this in your Python code:
-```python
-import os
-os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
-```
-
-If issues persist, please open an issue on our GitHub repository.
+Some users may encounter warnings about conflicting OpenMP libraries. If you see a warning about Intel OpenMP and LLVM OpenMP being loaded at the same time, please see <https://github.com/joblib/threadpoolctl/blob/master/multiple_openmp.md> for more information and possible workarounds.
 
 
 ### Repository Structure
