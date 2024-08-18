@@ -9,13 +9,14 @@ import json
 
 def main(
     data_path,
-    additional_cols,
     optimization_param,
+    additional_cols=[],
     patch_size=16,
     pixel_size=3,
-    cell_types=["Tcytotoxic", "Tumor"],
-    mask_cell_types=["Tcytotoxic"],
-    stratify_by="Contains_Tcytotoxic",
+    cd8_name="Tcytotoxic",
+    tumor_name="Tumor",
+    stratify_by=None,
+    mask_cell_types=None,
     patient_split=None,
     model_path=None,
     model_arch="unet",
@@ -44,15 +45,17 @@ def main(
     dataset = mp.SpatialDataset(input_path=data_path, additional_cols=additional_cols)
 
     # generate masked patches
+    mask_cell_types = [cd8_name] if mask_cell_types is None else mask_cell_types
     dataset.generate_masked_patch(
         cell_to_mask=mask_cell_types,
-        cell_types=cell_types,
+        cell_types=[cd8_name, tumor_name],
         patch_size=patch_size,
         pixel_size=pixel_size,
         save=True,
     )
 
     print("Loading data...")
+    stratify_by = f"Contains_{cd8_name}" if stratify_by is None else stratify_by
     dataset.generate_data_splits(stratify_by=stratify_by, specify_split=patient_split)
 
     # initialize model
@@ -78,8 +81,8 @@ def main(
     # images to generate counterfactuals
     dataset.get_split_info()
     select_metadata = dataset.metadata[
-        (dataset.metadata["Contains_Tumor"] == 1)
-        & (dataset.metadata["Contains_Tcytotoxic"] == 0)
+        (dataset.metadata[f"Contains_{tumor_name}"] == 1)
+        & (dataset.metadata[f"Contains_{cd8_name}"] == 0)
         & (dataset.metadata["splits"] == "train")
     ]
 
@@ -98,7 +101,9 @@ def main(
         save_dir=save_dir,
         device="cpu",
         num_workers=os.cpu_count() - 1,
-        verbosity=0
+        verbosity=0,
+        tumor_name=tumor_name,
+        cd8_name=cd8_name,
     )
 
 
@@ -113,7 +118,6 @@ if __name__ == "__main__":
         "max_iterations": 1000,
         "c_init": 1000.0,
         "c_steps": 5,
-        "threshold": 0.33,  # probability cutoff for classification
         "channel_to_perturb": [
             "Glnsynthetase",
             "CCR4",

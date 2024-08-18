@@ -38,6 +38,8 @@ def get_counterfactual(
     trustscore_kwargs: Optional[dict] = None,
     device: str = None,
     model_kwargs: Optional[dict] = {},
+    tumor_name: str = "Tumor",
+    cd8_name: str = "Tcytotoxic",
 ):
     """
     Generate counterfactuals for the dataset.
@@ -59,7 +61,13 @@ def get_counterfactual(
     """
 
     # Get optimal model threshold by maximizing RMSE over validation set
-    opt_cutoff = optimize_threshold(dataset, split="validate", model_path=model_path) 
+    opt_cutoff = optimize_threshold(
+        dataset,
+        split="validate",
+        model_path=model_path,
+        tumor_name=tumor_name,
+        cd8_name=cd8_name,
+    )
     # Set default values
     threshold = optimization_params.pop("threshold", opt_cutoff)
     channel_to_perturb = optimization_params.pop("channel_to_perturb", None)
@@ -91,7 +99,7 @@ def get_counterfactual(
             dataset.root_dir, DefaultFolderName.counterfactual.value
         )
     os.makedirs(save_dir, exist_ok=True)
-    
+
     # Build kdtree if it does not exist
     model = load_model(model_path, **model_kwargs).to(device)
     if not os.path.exists(kdtree_path):
@@ -135,7 +143,9 @@ def get_counterfactual(
             }
         )
 
-    print("Applying model to all instances to filter out ones already classified as target class")
+    print(
+        "Applying model to all instances to filter out ones already classified as target class"
+    )
     discard_mask = [
         args["original_class"] == target_class
         or model(

@@ -170,3 +170,6 @@ __pycache__/
 
 # ignore all .pyc files
 *.pyc
+
+# ignore custom main file
+main_custom.py
