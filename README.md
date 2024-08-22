@@ -15,11 +15,11 @@ Morpheus is an integrated deep learning framework that takes large scale spatial
 - CUDA 11.7 or higher (for GPU acceleration)
 - Other dependencies listed in `requirements.txt`
 
-Note numpy 2.0 or above not currently supported 
+Note numpy 2.0 or above not currently supported
 
 ### Installation
 
-#### Using pip (PyPI)
+#### Option 1: Using pip (PyPI)
 
 Run the following in the command line
 
@@ -27,7 +27,7 @@ Run the following in the command line
 pip install morpheus-spatial
 ```
 
-#### From Source
+#### Option 2: From Source
 
 To install Morpheus from source, clone the repository and install the dependencies:
 
@@ -39,16 +39,17 @@ pip install .
 ```
 
 ### Tutorial
-See `tutorial_notebook.ipynb` for a complete, self-contained workflow on using Morpheus to generate therapeutic strategies.
 
+See `tutorial_notebook.ipynb` for a complete, self-contained workflow on using Morpheus to generate therapeutic strategies.
 
 ### Known Issues
 
 #### OpenMP Conflicts on macOS
-Some users may encounter warnings about conflicting OpenMP libraries. If you see a warning about Intel OpenMP and LLVM OpenMP being loaded at the same time, please see <https://github.com/joblib/threadpoolctl/blob/master/multiple_openmp.md> for more information and possible workarounds.
 
+Some users may encounter warnings about conflicting OpenMP libraries. If you see a warning about Intel OpenMP and LLVM OpenMP being loaded at the same time, please see [https://github.com/joblib/threadpoolctl/blob/master/multiple_openmp.md](https://github.com/joblib/threadpoolctl/blob/master/multiple_openmp.md) for more information and possible workarounds.
 
 ### Repository Structure
+
 - **`assets/`**: Contains images and other assets used in the documentation and the project.
 - **`examples/`**: Example scripts and notebooks demonstrating various use cases of the Morpheus framework.
   - **`tutorial.ipynb`**: A notebook demonstrating how to reproduce the primary analyses of the paper.
