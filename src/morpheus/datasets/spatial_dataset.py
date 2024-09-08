@@ -6,7 +6,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import ray
-from tqdm import tqdm
+from tqdm.auto import trange, tqdm
 
 from ..utils.patchify import generate_patches_optimized
 from ..configuration.Types import (
@@ -328,7 +328,7 @@ class SpatialDataset:
         tolerance=None,
         specify_split: dict = None,
         save=True,
-    ):
+    ) -> dict:
         """
         Generate train, validation, and test data splits, and save the data splits to the given directory
 
@@ -377,14 +377,7 @@ class SpatialDataset:
             return
 
         print("Generating data splits...")
-        if specify_split is not None:
-            if SpatialDataset.issplitvalid(specify_split):
-                patient_split = {
-                    name: np.array(spt) for name, spt in specify_split.items()
-                }
-            else:
-                raise ValueError("Given split is not valid")
-        else:
+        if specify_split is None:
             patient_split = self.get_patient_splits(
                 stratify_by,
                 train_size,
@@ -394,6 +387,13 @@ class SpatialDataset:
                 shuffle,
                 **tolerance,
             )
+        else:
+            if SpatialDataset.issplitvalid(specify_split):
+                patient_split = {
+                    name: np.array(spt) for name, spt in specify_split.items()
+                }
+            else:
+                raise ValueError("Given split is not valid")
 
         if patient_split is None:
             raise ValueError(
@@ -474,72 +474,85 @@ class SpatialDataset:
     def summarize_split(self):
         pass
 
-    def save_splits(self, patient_split, label_name=ColName.contains_cd8.value):
+    def save_splits(self, patient_split, label_name=ColName.contains_cd8.value, chunk_size=1000):
+        """
+        Save the data splits to the specified directory in a chunked manner to avoid memory issues.
+
+        Args:
+            patient_split: dict
+                A dictionary containing the patient IDs for the train, validation, and test splits
+            label_name: str
+                The metadata column to use as the label
+            chunk_size: int
+                The number of patches to process at a time
+        """
 
         # obtain patch index corresponding to patient split
-        split_index = {
+        split_patient_index = {
             key: self.metadata[self.metadata[ColName.patient_id.value].isin(val)].index
             for key, val in patient_split.items()
         }
 
-        # read in image data
         with h5py.File(self.patch_path, "r") as f:
-            patches = f["images"][:]
+            for split_name in tqdm(Splits, desc="Saving splits"):
+                _index = split_patient_index[split_name.value]
 
-        # iterate over splits and save patches
-        normalization_params = None
-        for split_name in tqdm(
-            Splits,
-            desc="Saving splits",
-        ):
-            index = split_index[split_name.value]
-            _patches = patches[index, ...]
-            _labels = self.metadata.iloc[index][label_name].values.astype(int)
-            _ids = self.metadata.iloc[index][ColName.patch_id.value].values
-            metadata_to_save = self.metadata.iloc[index][
-                [
-                    ColName.patch_id.value,
-                    label_name,
-                    ColName.patient_id.value,
-                    ColName.image_id.value,
-                ]
-            ]
+                # make directories for the split
+                _path = os.path.join(self.split_dir, split_name.value)
+                if not os.path.isdir(_path):
+                    os.makedirs(_path)
+                    os.makedirs(os.path.join(_path, "0"))
+                    os.makedirs(os.path.join(_path, "1"))
 
-            # make directories for the split
-            _path = os.path.join(self.split_dir, split_name.value)
-            if not os.path.isdir(_path):
-                os.makedirs(_path)
-                os.makedirs(os.path.join(_path, "0"))
-                os.makedirs(os.path.join(_path, "1"))
+                # Initialize an empty list to store metadata for the entire split
+                metadata = self.metadata.iloc[_index][
+                        [
+                            ColName.patch_id.value,
+                            label_name,
+                            ColName.patient_id.value,
+                            ColName.image_id.value,
+                        ]
+                    ]
+                metadata.to_csv(
+                    os.path.join(_path, DefaultFileName.label.value), index=False
+                )
+        
+                # Initialize accumulators for normalization
+                tota_patches, h, w, n_channels = f["images"].shape  # Assuming channel-last image format
+                mean_accumulator = np.zeros(n_channels)
+                sum_square_accumulator = np.zeros(n_channels)
 
-            # save metadata
-            metadata_to_save.to_csv(
-                os.path.join(_path, DefaultFileName.label.value), index=False
-            )
+                for i in trange(0, len(_index), chunk_size, desc=f"Saving images for {split_name.value} split", leave=False):
+                    _indices = _index[i:i+chunk_size]
+                    _patches = f["images"][_indices, ...]  # Lazy loading of patches
 
-            # save patches
-            n_image = len(_labels)
-            for i in tqdm(
-                range(n_image),
-                desc=f"Saving images for {split_name.value} split",
-                leave=False,
-            ):
-                # sparse_tensor = torch.tensor(_patches[i, ...]).to_sparse()
-                save_path = os.path.join(_path, f"{_labels[i]}/patch_{_ids[i]}.npy")
-                # Save the sparse tensor
-                np.save(save_path, _patches[i, ...])
-                # torch.save(sparse_tensor, save_path)
+                    # save patches
+                    n_patches = _patches.shape[0]
+                    _labels = self.metadata.iloc[_indices][label_name].values.astype(int)
+                    _ids = self.metadata.iloc[_indices][ColName.patch_id.value].values
+                    for i in trange(n_patches, leave=False):
+                        save_path = os.path.join(_path, f"{_labels[i]}/patch_{_ids[i]}.npy")
+                        np.save(save_path, _patches[i, ...])
 
-            # save normalization parameters
-            if split_name.value == Splits.train.value:
-                normalization_params = {
-                    "mean": np.mean(_patches, axis=(0, 1, 2)).tolist(),
-                    "stdev": np.std(_patches, axis=(0, 1, 2)).tolist(),
-                }
+                    # Accumulate for mean and variance calculation
+                    if split_name.value == Splits.train.value:
+                        mean_accumulator += np.sum(_patches, axis=(0, 1, 2))
+                        sum_square_accumulator += np.sum(_patches ** 2, axis=(0, 1, 2))
 
-        # save normalization parameters to json
-        with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
-            json.dump(normalization_params, f)
+                # save normalization parameters
+                if split_name.value == Splits.train.value:
+                    # Calculate the final mean and std
+                    total_pixel_count = tota_patches * h * w
+                    mean = mean_accumulator / total_pixel_count
+                    variance = (sum_square_accumulator / total_pixel_count) - (mean ** 2)
+                    std = np.sqrt(variance)
+
+                    normalization_params = {    
+                        "mean": mean.tolist(),
+                        "std": std.tolist(),
+                    }
+                    with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
+                        json.dump(normalization_params, f)
 
     def load_from_metadata(
         self, metadata, col_as_label=ColName.contains_cd8.value, parallel=False
