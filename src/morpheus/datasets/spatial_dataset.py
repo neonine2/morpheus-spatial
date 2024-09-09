@@ -2,6 +2,7 @@ import json
 import os
 import warnings
 
+import shutil
 import h5py
 import numpy as np
 import pandas as pd
@@ -185,6 +186,7 @@ class SpatialDataset:
         metadata_df = SpatialDataset.convert_object_columns(
             metadata_df.reset_index().rename(columns={"index": ColName.patch_id.value})
         )
+        metadata_df = SpatialDataset.convert_id_to_integer(metadata_df, [ColName.patient_id.value, ColName.image_id.value, ColName.patch_id.value])
         self.metadata = metadata_df
         n, h, w, c = patches_array.shape
 
@@ -376,7 +378,6 @@ class SpatialDataset:
             print(f"Data splits already exist in {self.split_dir}")
             return
 
-        print("Generating data splits...")
         if specify_split is None:
             patient_split = self.get_patient_splits(
                 stratify_by,
@@ -401,11 +402,16 @@ class SpatialDataset:
             )
 
         if save:
-            print("Saving splits...")
-            self.save_splits(patient_split, label_name=stratify_by)
-            print(f"Data splits saved to {self.split_dir}")
-            self.get_split_info()
-        return patient_split
+            try:
+                self.save_splits(patient_split, label_name=stratify_by)
+                print(f"Data splits saved to {self.split_dir}")
+                self.get_split_info()
+                return patient_split
+            except Exception as e:
+                print(f"Error saving splits: {e}")
+                # remove the split directory if an error occurs
+                if os.path.isdir(self.split_dir):
+                    shutil.rmtree(self.split_dir)
 
     @staticmethod
     def is_valid_split(split_info, eps=0.01, train_lb=0.65):
@@ -474,7 +480,7 @@ class SpatialDataset:
     def summarize_split(self):
         pass
 
-    def save_splits(self, patient_split, label_name=ColName.contains_cd8.value, chunk_size=1000):
+    def save_splits(self, patient_split, label_name, chunk_size=1000):
         """
         Save the data splits to the specified directory in a chunked manner to avoid memory issues.
 
@@ -488,21 +494,20 @@ class SpatialDataset:
         """
 
         # obtain patch index corresponding to patient split
-        split_patient_index = {
-            key: self.metadata[self.metadata[ColName.patient_id.value].isin(val)].index
+        split_index = {
+            key: self.metadata[self.metadata[ColName.patient_id.value].isin(val)].index.to_numpy(dtype=int)
             for key, val in patient_split.items()
         }
 
-        with h5py.File(self.patch_path, "r") as f:
-            for split_name in tqdm(Splits, desc="Saving splits"):
-                _index = split_patient_index[split_name.value]
+        with h5py.File(self.patch_path, "r") as patch_file:
+            _, h, w, n_channels = patch_file["images"].shape  # Assuming channel-last image format
+
+            for split_name, _index in split_index.items():
 
                 # make directories for the split
-                _path = os.path.join(self.split_dir, split_name.value)
-                if not os.path.isdir(_path):
-                    os.makedirs(_path)
-                    os.makedirs(os.path.join(_path, "0"))
-                    os.makedirs(os.path.join(_path, "1"))
+                _path = os.path.join(self.split_dir, split_name)
+                os.makedirs(os.path.join(_path, "0"), exist_ok=True)
+                os.makedirs(os.path.join(_path, "1"), exist_ok=True)
 
                 # Initialize an empty list to store metadata for the entire split
                 metadata = self.metadata.iloc[_index][
@@ -517,17 +522,16 @@ class SpatialDataset:
                     os.path.join(_path, DefaultFileName.label.value), index=False
                 )
         
-                # Initialize accumulators for normalization
-                tota_patches, h, w, n_channels = f["images"].shape  # Assuming channel-last image format
+                # Initialize accumulators for normalization                
                 mean_accumulator = np.zeros(n_channels)
                 sum_square_accumulator = np.zeros(n_channels)
 
-                for i in trange(0, len(_index), chunk_size, desc=f"Saving images for {split_name.value} split", leave=False):
+                for i in trange(0, len(_index), chunk_size, desc=f"Saving {split_name} split in chunks"):
                     _indices = _index[i:i+chunk_size]
-                    _patches = f["images"][_indices, ...]  # Lazy loading of patches
+                    _patches = patch_file["images"][_indices, ...]  # Lazy loading of patches
 
                     # save patches
-                    n_patches = _patches.shape[0]
+                    n_patches = len(_indices)
                     _labels = self.metadata.iloc[_indices][label_name].values.astype(int)
                     _ids = self.metadata.iloc[_indices][ColName.patch_id.value].values
                     for i in trange(n_patches, leave=False):
@@ -535,24 +539,36 @@ class SpatialDataset:
                         np.save(save_path, _patches[i, ...])
 
                     # Accumulate for mean and variance calculation
-                    if split_name.value == Splits.train.value:
+                    if split_name == Splits.train.value:
                         mean_accumulator += np.sum(_patches, axis=(0, 1, 2))
                         sum_square_accumulator += np.sum(_patches ** 2, axis=(0, 1, 2))
 
                 # save normalization parameters
-                if split_name.value == Splits.train.value:
+                if split_name == Splits.train.value:
                     # Calculate the final mean and std
-                    total_pixel_count = tota_patches * h * w
+                    total_pixel_count = len(_index) * h * w
                     mean = mean_accumulator / total_pixel_count
                     variance = (sum_square_accumulator / total_pixel_count) - (mean ** 2)
                     std = np.sqrt(variance)
 
                     normalization_params = {    
                         "mean": mean.tolist(),
-                        "std": std.tolist(),
+                        "stdev": std.tolist(),
                     }
-                    with open(os.path.join(self.split_dir, "normalization_params.json"), "w") as f:
-                        json.dump(normalization_params, f)
+                    normalization_path = os.path.join(self.split_dir, "normalization_params.json")
+                    with open(normalization_path, "w") as normalization_file:
+                        json.dump(normalization_params, normalization_file)
+                        print(f"Normalization parameters saved to {normalization_path}")
+
+    @staticmethod
+    def convert_id_to_integer(metadata, col_name=[]):
+        """
+        Convert the columns to integers if they are floats.
+        """
+        for column in col_name:
+            if issubclass(metadata[column].dtype.type, float):
+                metadata[column] = metadata[column].astype(int)
+        return metadata
 
     def load_from_metadata(
         self, metadata, col_as_label=ColName.contains_cd8.value, parallel=False
@@ -636,6 +652,7 @@ class SpatialDataset:
         if len(set(split[Splits.validate.value]) & set(split[Splits.test.value])) > 0:
             raise ValueError("Validation and test splits contain the same patient IDs")
         return True
+
 
 
 @ray.remote
