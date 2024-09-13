@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "morpheus-spatial"
-version = "1.0.1"
+version = "1.0.2"
 description = ""
 authors = ["neonine2 <jerry.wang95@yahoo.ca>"]
 readme = "README.md"
