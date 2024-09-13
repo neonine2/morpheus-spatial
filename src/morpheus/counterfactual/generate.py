@@ -349,7 +349,7 @@ def build_kdtree(
     mu: list,
     stdev: list,
     trustscore_kwargs: Optional[dict] = None,
-    batch_size: int = 128  # Batch size to control memory usage
+    batch_size: int = 512  # Batch size to control memory usage
 ):
     if trustscore_kwargs is not None:
         ts = TrustScore(**trustscore_kwargs)
@@ -361,7 +361,8 @@ def build_kdtree(
     all_preds = []
 
     # Process the data incrementally in batches
-    for batch in load_npy_files_in_batches(train_data, batch_size=batch_size):
+    print("processing data in batches")
+    for batch in tqdm(load_npy_files_in_batches(train_data, batch_size=batch_size)):
         # Normalize and permute the batch
         batch = torch.from_numpy((batch - np.array(mu)) / np.array(stdev)).float()
         X_t = torch.permute(batch, (0, 3, 1, 2))
