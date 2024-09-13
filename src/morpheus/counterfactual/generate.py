@@ -349,27 +349,42 @@ def build_kdtree(
     mu: list,
     stdev: list,
     trustscore_kwargs: Optional[dict] = None,
+    batch_size: int = 128  # Batch size to control memory usage
 ):
-    train_patch = load_npy_files_to_array(train_data)
-    train_patch = torch.from_numpy(
-        (train_patch - np.array(mu)) / np.array(stdev)
-    ).float()
-    X_t = torch.permute(train_patch, (0, 3, 1, 2))
-
-    model_out = model(X_t).detach().numpy()
-    preds = np.argmax(model_out, axis=1)
-
     if trustscore_kwargs is not None:
         ts = TrustScore(**trustscore_kwargs)
     else:
         ts = TrustScore()
-    train_patch = torch.mean(train_patch, (1, 2))
-    ts.fit(train_patch, preds, classes=2)
+
+    # Variables to accumulate the mean calculation
+    chunk_means = []
+    all_preds = []
+
+    # Process the data incrementally in batches
+    for batch in load_npy_files_in_batches(train_data, batch_size=batch_size):
+        # Normalize and permute the batch
+        batch = torch.from_numpy((batch - np.array(mu)) / np.array(stdev)).float()
+        X_t = torch.permute(batch, (0, 3, 1, 2))
+
+        # Pass through the model to get predictions
+        model_out = model(X_t).detach().numpy()
+        preds = np.argmax(model_out, axis=1)
+        all_preds.append(preds)
+
+        # Compute mean across the spatial dimensions for the batch
+        chunk_mean = torch.mean(batch, dim=(1, 2))
+        chunk_means.append(chunk_mean)
+
+    # Fit TrustScore using the overall mean
+    overall_mean = torch.cat(chunk_means, dim=0)
+    preds_flattened = np.concatenate(all_preds)
+    ts.fit(overall_mean, preds_flattened, classes=2)
     save_object(ts, kdtree_path)
 
 
-def load_npy_files_to_array(base_dir):
-    arrays = []  # This list will hold all the numpy arrays
+def load_npy_files_in_batches(base_dir, batch_size=128):
+    """Generator that loads the .npy files in batches to reduce memory usage."""
+    arrays = [] # List to store the arrays
     sub_dirs = ["0", "1"]  # Subdirectories to look into
 
     for sub_dir in sub_dirs:
@@ -380,9 +395,14 @@ def load_npy_files_to_array(base_dir):
                 array = np.load(file_path)
                 arrays.append(array)
 
-    # Stack the arrays to form a single n by l by w by n_channels array
-    final_array = np.stack(arrays, axis=0)
-    return final_array
+            # Once we reach the batch size, yield the batch
+            if len(arrays) >= batch_size:
+                yield np.stack(arrays, axis=0)
+                arrays = []  # Reset for the next batch
+
+    # Yield any remaining arrays
+    if arrays:
+        yield np.stack(arrays, axis=0)
 
 
 def alter_image(y, unnormed_patch, mu, stdev, unnormed_mean):
