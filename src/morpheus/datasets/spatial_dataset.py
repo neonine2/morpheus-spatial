@@ -480,7 +480,7 @@ class SpatialDataset:
     def summarize_split(self):
         pass
 
-    def save_splits(self, patient_split, label_name, chunk_size=1000):
+    def save_splits(self, patient_split, label_name, chunk_size=100000):
         """
         Save the data splits to the specified directory in a chunked manner to avoid memory issues.
 
