@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from ..datasets import SpatialDataset
 from .cf import Counterfactual
-from ..classification import load_model, optimize_threshold
+from ..classification import load_model, optimize_threshold_chunked
 from ..confidence import TrustScore
 from ..configuration import (
     Splits,
@@ -61,13 +61,15 @@ def get_counterfactual(
     """
 
     # Get optimal model threshold by maximizing RMSE over validation set
-    opt_cutoff = optimize_threshold(
+    print("Optimizing threshold using validation set...")
+    opt_cutoff = optimize_threshold_chunked(
         dataset,
         split="validate",
         model_path=model_path,
         tumor_name=tumor_name,
         cd8_name=cd8_name,
     )
+    print(f"Optimal threshold: {opt_cutoff}")
     # Set default values
     threshold = optimization_params.pop("threshold", opt_cutoff)
     channel_to_perturb = optimization_params.pop("channel_to_perturb", None)
@@ -103,7 +105,7 @@ def get_counterfactual(
     # Build kdtree if it does not exist
     model = load_model(model_path, **model_kwargs).to(device)
     if not os.path.exists(kdtree_path):
-        print("Building kdtree...")
+        print("Building kdtree from data...")
         build_kdtree(kdtree_path, train_data, model, mu, stdev, trustscore_kwargs)
         print("kdtree saved")
 
