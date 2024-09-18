@@ -51,7 +51,6 @@ def main(
         cell_types=[cd8_name, tumor_name],
         patch_size=patch_size,
         pixel_size=pixel_size,
-        save=True,
     )
 
     print("Loading data...")
@@ -138,6 +137,7 @@ if __name__ == "__main__":
     }
     BASE = "crc"  # change to your own directory
     # For paper reproduction purpose: load patient split and trained model
+    print(f'Using Morpheus {mp.__version__}')
     with open(os.path.join(BASE, "patient_split.json"), "r") as file:
         patient_split = json.load(file)
     main(
