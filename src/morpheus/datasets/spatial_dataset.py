@@ -9,7 +9,7 @@ import pandas as pd
 import ray
 from tqdm.auto import trange, tqdm
 
-from ..utils.patchify import generate_patches_optimized
+from ..utils.patchify import save_masked_patch_to_hdf5
 from ..configuration.Types import (
     ColName,
     Splits,
@@ -139,7 +139,6 @@ class SpatialDataset:
         patch_size: int = 16,
         pixel_size: int = 3,
         cell_types: list = None,
-        save: bool = True,
         save_path: str = None,
     ):
         """
@@ -157,18 +156,17 @@ class SpatialDataset:
 
         """
         # check the save_path is not already present
-        if save:
-            self.patch_path = (
-                save_path
-                if save_path is not None
-                else os.path.join(self.root_dir, DefaultFileName.patch.value)
-            )
-            if os.path.isfile(self.patch_path):
-                self.load_patch_data()
-                self.check_loaded_patch()
-                print(f"File {self.patch_path} already exists, existing file loaded")
-                print(f"Total number of patches: {len(self.metadata)}")
-                return
+        self.patch_path = (
+            save_path
+            if save_path is not None
+            else os.path.join(self.root_dir, DefaultFileName.patch.value)
+        )
+        if os.path.isfile(self.patch_path):
+            self.load_patch_data()
+            self.check_loaded_patch()
+            print(f"File {self.patch_path} already exists, existing file loaded")
+            print(f"Total number of patches: {len(self.metadata)}")
+            return
 
         # print out details about the patches
         print(f"Generating patches of size {patch_size}x{patch_size} pixels")
@@ -180,51 +178,31 @@ class SpatialDataset:
         df = self.load_input_csv(channel_names=self.channel_names)
 
         # generate the patches
-        patches_array, metadata_df = generate_patches_optimized(
-            df, patch_size, pixel_size, cell_types, self.channel_names, cell_to_mask
+        metadata_df = save_masked_patch_to_hdf5(
+            df, patch_size, pixel_size, cell_types, molecule_columns=self.channel_names, mask_cell_types=cell_to_mask, save_path=self.patch_path
         )
         metadata_df = SpatialDataset.convert_object_columns(
             metadata_df.reset_index().rename(columns={"index": ColName.patch_id.value})
         )
         metadata_df = SpatialDataset.convert_id_to_integer(metadata_df, [ColName.patient_id.value, ColName.image_id.value, ColName.patch_id.value])
         self.metadata = metadata_df
-        n, h, w, c = patches_array.shape
 
-        # check number of channel names matches the number of channels in the data
-        if c != len(self.channel_names):
-            raise ValueError("Number of channel names do not match data dimensions")
+        with h5py.File(self.patch_path, "a") as f: # append mode
+            # Add channel names
+            f.create_dataset("channel_names", data=self.channel_names)
 
-        # check the patch dimensions match the expected dimensions
-        if h != patch_size or w != patch_size:
-            raise ValueError("Patch dimensions do not match the expected dimensions")
+            # Convert the metadata DataFrame to a structured NumPy array
+            metadata_numpy = metadata_df.to_records(index=False)
 
-        # check the number of patches generated matches the number of rows in the metadata
-        if n != len(metadata_df):
-            raise ValueError("Number of patches generated does not match metadata")
+            # Add metadata as a new dataset
+            f.create_dataset(
+                "metadata", data=metadata_numpy, dtype=metadata_numpy.dtype
+            )
 
-        if save:
-            with h5py.File(self.patch_path, "w") as f:
-                # Create a dataset to store the images
-                f.create_dataset(
-                    "images",
-                    data=patches_array,
-                    compression="gzip",
-                    chunks=(min(n, 100), h, w, c),
-                    dtype=patches_array.dtype,
-                )
-
-                # Create a dataset to store the channel names
-                f.create_dataset("channel_names", data=self.channel_names)
-
-                # Create a dataset to store the metadata
-                metadata_numpy = metadata_df.to_records(index=False)
-                f.create_dataset(
-                    "metadata", data=metadata_numpy, dtype=metadata_numpy.dtype
-                )
-            print(f"Patches saved to {self.patch_path}")
-            self.load_patch_data()
-            self.check_loaded_patch()
-        print(f"Number of patches generated: {n}")
+        print(f"Patches saved to {self.patch_path}")
+        self.load_patch_data()
+        self.check_loaded_patch()
+        print(f"Number of patches generated: {len(metadata_df)}")
         print(f"Example patch metadata:\n{metadata_df.head()}")
         return
 
