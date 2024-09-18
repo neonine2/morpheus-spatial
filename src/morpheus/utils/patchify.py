@@ -1,74 +1,103 @@
 import pandas as pd
 import numpy as np
+import h5py
 from ..configuration.Types import ColName
 
+from tqdm import tqdm
 
-def generate_patches_optimized(
-    df, patch_size, pixel_size, cell_types, molecule_columns: list, mask_cell_types=None
+def save_masked_patch_to_hdf5(
+    df, patch_size, pixel_size, cell_types, molecule_columns: list, mask_cell_types=None, save_path="patch.h5"
 ):
     # Reorder the molecule_columns to match the order in the input DataFrame
     molecule_columns = [col for col in df.columns if col in molecule_columns]
     num_channels = len(molecule_columns)
 
+    # Get data types for first molecule columns
+    data_type = df[molecule_columns].iloc[:, 0].dtypes
+
     # Get all combinations of image numbers and patient IDs in the DataFrame
     all_image = df[[ColName.image_id.value, ColName.patient_id.value]].drop_duplicates()
 
-    patches = []
     metadata = []
-
-    for _, image in all_image.iterrows():
-        # Filter the DataFrame for the current image and patient
-        image_number, patient_id = (
-            image[ColName.image_id.value],
-            image[ColName.patient_id.value],
-        )
-        image_df = filter_dataframe(df, image_number, patient_id)
-
-        min_x, min_y, max_x, max_y = calculate_image_dimensions(image_df, pixel_size)
-        num_patches_x, num_patches_y = calculate_num_patches(
-            min_x, min_y, max_x, max_y, patch_size
-        )
-        patch_indices = create_patch_indices(num_patches_x, num_patches_y)
-        start_x, end_x, start_y, end_y = calculate_patch_boundaries(
-            patch_indices, min_x, min_y, patch_size
+    with h5py.File(save_path, "w") as f:
+        # Create a dataset to store the images
+        dset = f.create_dataset(
+            "images",
+            shape=(0, patch_size, patch_size, num_channels),
+            maxshape=(None, patch_size, patch_size, num_channels),
+            compression="gzip",
+            chunks=(100, patch_size, patch_size, num_channels),
+            dtype=data_type,
         )
 
-        patch_metadata = create_patch_metadata(
-            image_number, patient_id, patch_indices, cell_types
-        )
-        image_array = convert_to_numpy_array(image_df, molecule_columns)
-
-        for i in range(len(patch_indices)):
-            patch_cells = filter_cells_in_patch(
-                image_array, start_x[i], end_x[i], start_y[i], end_y[i], pixel_size
+        for _, image in tqdm(all_image.iterrows(), total=len(all_image)):
+            # Filter the DataFrame for the current image and patient
+            image_number, patient_id = (
+                image[ColName.image_id.value],
+                image[ColName.patient_id.value],
             )
-            # if len(patch_cells) == 0:  # Skip empty patches
-            # continue
-            patch_array = create_patch_array(patch_size, num_channels)
-            patch_array = fill_patch_array(
-                patch_array,
-                patch_cells,
-                start_x[i],
-                start_y[i],
-                pixel_size,
-                mask_cell_types,
+            image_df = filter_dataframe(df, image_number, patient_id)
+
+            min_x, min_y, max_x, max_y = calculate_image_dimensions(image_df, pixel_size)
+            num_patches_x, num_patches_y = calculate_num_patches(
+                min_x, min_y, max_x, max_y, patch_size
+            )
+            patch_indices = create_patch_indices(num_patches_x, num_patches_y)
+            start_x, end_x, start_y, end_y = calculate_patch_boundaries(
+                patch_indices, min_x, min_y, patch_size
             )
 
-            patches.append(patch_array)
-            update_patch_metadata(
-                patch_metadata,
-                i,
-                image_df,
-                patch_cells[:, image_df.columns.get_loc(ColName.cell_type.value)],
-                cell_types,
+            patch_metadata = create_patch_metadata(
+                image_number, patient_id, patch_indices, cell_types
             )
+            image_array = convert_to_numpy_array(image_df, molecule_columns)
 
-        metadata.append(patch_metadata)
+            patches_list = []
+            for i in range(len(patch_indices)):
+                patch_cells = filter_cells_in_patch(
+                    image_array, start_x[i], end_x[i], start_y[i], end_y[i], pixel_size
+                )
+                # if len(patch_cells) == 0:  # Skip empty patches
+                # continue
+                patch_array = create_patch_array(patch_size, num_channels)
+                patch_array = fill_patch_array(
+                    patch_array,
+                    patch_cells,
+                    start_x[i],
+                    start_y[i],
+                    pixel_size,
+                    mask_cell_types,
+                )
 
-    patches_array = np.array(patches)
+                # append the patch to the list of patches
+                patches_list.append(patch_array)
+
+                update_patch_metadata(
+                    patch_metadata,
+                    i,
+                    image_df,
+                    patch_cells[:, image_df.columns.get_loc(ColName.cell_type.value)],
+                    cell_types,
+                )
+
+            # concatenate the patches and save them to the HDF5 file
+            patches_array = np.stack(patches_list)
+            num_patches = patches_array.shape[0]
+
+            # Resize the dataset to accommodate new patches
+            dset.resize(dset.shape[0] + num_patches, axis=0)
+
+            # Write all patches for this image at once to the end of the dataset
+            dset[-num_patches:] = patches_array
+
+            metadata.append(patch_metadata)
+        total_patches = dset.shape[0]
     metadata_df = pd.concat(metadata, ignore_index=True)
 
-    return patches_array, metadata_df
+    if total_patches != len(metadata_df):
+        raise ValueError("Number of patches generated does not match size of metadata")
+    
+    return metadata_df
 
 
 def filter_dataframe(df, image_number, patient_id):
